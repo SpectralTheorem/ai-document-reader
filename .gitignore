@@ -37,3 +37,7 @@ next-env.d.ts
 
 # uploads
 /uploads
+
+# debug books - never commit these
+booky_book.epub
+*.epub

@@ -6,7 +6,7 @@ import { ChapterList } from '@/components/ChapterList';
 import { ReaderPane } from '@/components/ReaderPane';
 import { ChatInterface } from '@/components/ChatInterface';
 import { Button } from '@/components/ui/button';
-import { X, BookOpen, MessageCircle } from 'lucide-react';
+import { X, BookOpen, MessageCircle, AlertTriangle } from 'lucide-react';
 
 interface ReaderLayoutProps {
   document: ParsedDocument;
@@ -15,11 +15,39 @@ interface ReaderLayoutProps {
 }
 
 export function ReaderLayout({ document, fileName, onReset }: ReaderLayoutProps) {
+  // Debug logging
+  console.log('📖 ReaderLayout received document:', {
+    hasDocument: !!document,
+    hasSections: !!document?.sections,
+    sectionsLength: document?.sections?.length || 0,
+    metadata: document?.metadata
+  });
+
   const [selectedSection, setSelectedSection] = useState<Section | null>(
-    document.sections[0] || null
+    document?.sections?.[0] || null
   );
   const [viewMode, setViewMode] = useState<'read' | 'chat'>('read');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  // Safety check - if document is malformed, show error
+  if (!document || !document.sections || document.sections.length === 0) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="text-red-600 mb-4">
+            <AlertTriangle className="h-12 w-12 mx-auto mb-2" />
+            <p className="text-lg font-medium">Document Error</p>
+          </div>
+          <p className="text-gray-600 mb-4">
+            The document failed to load properly. No sections were found.
+          </p>
+          <Button onClick={onReset} variant="outline">
+            Try Another File
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col">

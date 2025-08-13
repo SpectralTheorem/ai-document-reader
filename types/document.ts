@@ -33,6 +33,7 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
   sectionId?: string;
+  isError?: boolean;
 }
 
 export interface AIProvider {

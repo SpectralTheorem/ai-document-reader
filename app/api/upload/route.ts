@@ -20,6 +20,14 @@ export async function POST(request: NextRequest) {
     
     const parsedDocument = await DocumentFactory.parseDocument(buffer, documentType);
     
+    console.log('📋 Upload API returning document:', {
+      hasDocument: !!parsedDocument,
+      hasSections: !!parsedDocument?.sections,
+      sectionsCount: parsedDocument?.sections?.length || 0,
+      hasMetadata: !!parsedDocument?.metadata,
+      title: parsedDocument?.metadata?.title
+    });
+    
     return NextResponse.json({
       success: true,
       fileName: file.name,
