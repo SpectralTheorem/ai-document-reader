@@ -144,6 +144,8 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
       const decoder = new TextDecoder();
       let buffer = '';
       let accumulatedContent = '';
+      let currentThinkingBuffer = '';
+      let isInThinkingMode = false;
 
       try {
         while (true) {
@@ -158,28 +160,63 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
             if (line.startsWith('data: ')) {
               const data = line.slice(6);
               if (data === '[DONE]') {
+                // Flush any remaining thinking buffer
+                if (currentThinkingBuffer) {
+                  accumulatedContent += `<thinking>${currentThinkingBuffer}</thinking>`;
+                  currentThinkingBuffer = '';
+                }
                 setIsLoading(false);
                 return;
               }
               
               try {
                 const parsed = JSON.parse(data);
-                if (parsed.content) {
-                  console.log('📥 Received content chunk:', parsed.content.substring(0, 100));
+                console.log('📥 Received chunk:', parsed);
+                
+                if (parsed.type === 'thinking') {
+                  console.log('🧠 Adding thinking content:', parsed.content);
+                  // Accumulate thinking tokens into a buffer
+                  if (!isInThinkingMode) {
+                    isInThinkingMode = true;
+                  }
+                  currentThinkingBuffer += parsed.content;
+                } else if (parsed.type === 'content') {
+                  // If we were in thinking mode, flush the buffer first
+                  if (isInThinkingMode && currentThinkingBuffer) {
+                    accumulatedContent += `<thinking>${currentThinkingBuffer}</thinking>`;
+                    currentThinkingBuffer = '';
+                    isInThinkingMode = false;
+                  }
+                  console.log('📝 Adding regular content:', parsed.content);
                   accumulatedContent += parsed.content;
-                  console.log('📚 Accumulated content length:', accumulatedContent.length);
-                  
-                  // Update the assistant message with accumulated content
-                  onMessagesChange(prev => 
-                    prev.map(msg => 
-                      msg.id === assistantMessageId 
-                        ? { ...msg, content: accumulatedContent }
-                        : msg
-                    )
-                  );
+                } else if (parsed.content) {
+                  // Fallback for old format
+                  if (isInThinkingMode && currentThinkingBuffer) {
+                    accumulatedContent += `<thinking>${currentThinkingBuffer}</thinking>`;
+                    currentThinkingBuffer = '';
+                    isInThinkingMode = false;
+                  }
+                  console.log('📥 Received legacy content chunk:', parsed.content.substring(0, 100));
+                  accumulatedContent += parsed.content;
                 } else if (parsed.error) {
                   throw new Error(parsed.error);
                 }
+                
+                console.log('📚 Accumulated content length:', accumulatedContent.length);
+                
+                // Update the assistant message with accumulated content
+                // Include the current thinking buffer in display
+                const displayContent = isInThinkingMode && currentThinkingBuffer 
+                  ? accumulatedContent + `<thinking>${currentThinkingBuffer}</thinking>`
+                  : accumulatedContent;
+                  
+                onMessagesChange(prev => 
+                  prev.map(msg => 
+                    msg.id === assistantMessageId 
+                      ? { ...msg, content: displayContent }
+                      : msg
+                  )
+                );
               } catch (error) {
                 console.error('Error parsing JSON:', error);
               }

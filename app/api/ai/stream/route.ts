@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
           for await (const chunk of aiProvider.chatStream(processedMessages)) {
             chunkCount++;
             console.log(`📤 Streaming chunk ${chunkCount}:`, chunk);
-            const data = encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+            const data = encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`);
             controller.enqueue(data);
           }
           console.log(`✅ Stream completed. Total chunks: ${chunkCount}`);

@@ -39,7 +39,7 @@ export class AIProvider {
     }
   }
 
-  async *chatStream(messages: Array<{ role: string; content: string }>): AsyncGenerator<string, void, unknown> {
+  async *chatStream(messages: Array<{ role: string; content: string }>): AsyncGenerator<any, void, unknown> {
     try {
       switch (this.config.provider) {
         case 'ollama':
@@ -55,7 +55,7 @@ export class AIProvider {
           throw new Error(`Unsupported provider: ${this.config.provider}`);
       }
     } catch (error: any) {
-      yield `Error: ${error.message || 'An error occurred while processing your request'}`;
+      yield { type: 'error', content: `Error: ${error.message || 'An error occurred while processing your request'}` };
     }
   }
 
@@ -149,7 +149,7 @@ export class AIProvider {
     };
   }
 
-  private async *streamWithOllama(messages: Array<{ role: string; content: string }>): AsyncGenerator<string, void, unknown> {
+  private async *streamWithOllama(messages: Array<{ role: string; content: string }>): AsyncGenerator<any, void, unknown> {
     const baseUrl = this.config.baseUrl || 'http://localhost:11434';
     
     let response;
@@ -216,11 +216,18 @@ export class AIProvider {
             try {
               const parsed = JSON.parse(line);
               console.log('📋 Parsed Ollama response:', parsed);
+              
+              // Handle both thinking and content fields from Ollama
+              if (parsed.message?.thinking) {
+                console.log('🧠 Yielding thinking content:', parsed.message.thinking);
+                yield { type: 'thinking', content: parsed.message.thinking };
+              }
               if (parsed.message?.content) {
-                console.log('✅ Yielding content:', parsed.message.content);
-                yield parsed.message.content;
-              } else {
-                console.log('⚠️ No content in parsed response');
+                console.log('✅ Yielding regular content:', parsed.message.content);
+                yield { type: 'content', content: parsed.message.content };
+              }
+              if (!parsed.message?.thinking && !parsed.message?.content) {
+                console.log('⚠️ No content or thinking in parsed response');
               }
             } catch (error) {
               console.error('❌ Error parsing JSON:', error, 'Line was:', line);
@@ -233,7 +240,7 @@ export class AIProvider {
     }
   }
 
-  private async *streamWithOpenAI(messages: Array<{ role: string; content: string }>): AsyncGenerator<string, void, unknown> {
+  private async *streamWithOpenAI(messages: Array<{ role: string; content: string }>): AsyncGenerator<any, void, unknown> {
     if (!this.config.apiKey) {
       throw new Error('OpenAI API key is required. Please enter your API key in the settings.');
     }
@@ -302,7 +309,7 @@ export class AIProvider {
               const parsed = JSON.parse(data);
               const content = parsed.choices?.[0]?.delta?.content;
               if (content) {
-                yield content;
+                yield { type: 'content', content: content };
               }
             } catch (error) {
               console.error('Error parsing JSON:', error);
@@ -315,11 +322,11 @@ export class AIProvider {
     }
   }
 
-  private async *streamWithAnthropic(messages: Array<{ role: string; content: string }>): AsyncGenerator<string, void, unknown> {
+  private async *streamWithAnthropic(messages: Array<{ role: string; content: string }>): AsyncGenerator<any, void, unknown> {
     // For now, fall back to non-streaming for Anthropic
     // Anthropic's streaming API has a different format
     const response = await this.chatWithAnthropic(messages);
-    yield response.content;
+    yield { type: 'content', content: response.content };
   }
 
   static async getOllamaModels(baseUrl: string = 'http://localhost:11434'): Promise<string[]> {
