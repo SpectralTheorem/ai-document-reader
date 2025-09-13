@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     const bookPath = path.join(process.cwd(), 'booky_book.epub');
     const fileBuffer = await readFile(bookPath);
     
-    return new Response(fileBuffer, {
+    return new Response(new Uint8Array(fileBuffer), {
       headers: {
         'Content-Type': 'application/epub+zip',
         'Content-Disposition': 'attachment; filename="booky_book.epub"',

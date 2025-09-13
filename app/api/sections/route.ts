@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DocumentFactory } from '@/lib/parsers/document-factory';
+import { readFile } from 'fs/promises';
 import path from 'path';
 
 export async function GET(request: NextRequest) {
@@ -19,7 +20,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid file type' }, { status: 400 });
     }
 
-    const document = await DocumentFactory.parseDocument(filePath, documentType);
+    const fileBuffer = await readFile(filePath);
+    const document = await DocumentFactory.parseDocument(fileBuffer, documentType);
     
     if (sectionId) {
       const section = document.sections.find(s => s.id === sectionId);

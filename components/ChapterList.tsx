@@ -74,10 +74,7 @@ export function ChapterList({ sections, selectedSection, onSelectSection }: Chap
   };
 
   return (
-    <div className="py-4">
-      <h2 className="px-4 mb-3 text-sm font-semibold text-gray-500 uppercase tracking-wider">
-        Chapters
-      </h2>
+    <div className="py-2">
       <div className="space-y-0.5">
         {sections.map(section => renderSection(section))}
       </div>
