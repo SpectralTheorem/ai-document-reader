@@ -1,8 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSettings } from '@/lib/settings-storage';
 import { TokenTracker } from '@/lib/token-tracker';
+import { conversationStorage } from '@/lib/conversation-storage';
+import { ConversationStats } from '@/types/conversations';
 import { Button } from '@/components/ui/button';
 import {
   X,
@@ -17,7 +19,8 @@ import {
   RotateCcw,
   Trash2,
   Check,
-  AlertTriangle
+  AlertTriangle,
+  MessageSquare
 } from 'lucide-react';
 import { THEME_CONFIGS, FONT_CONFIGS } from '@/types/settings';
 
@@ -26,7 +29,7 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-type SettingsTab = 'ai' | 'reading' | 'interface' | 'data';
+type SettingsTab = 'ai' | 'reading' | 'interface' | 'data' | 'conversations';
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const { settings, updateCategory, resetSettings, exportSettings, importSettings } = useSettings();
@@ -39,10 +42,82 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [importData, setImportData] = useState('');
   const [showImportModal, setShowImportModal] = useState(false);
   const [tokenUsage, setTokenUsage] = useState(TokenTracker.getTodayStats());
+  const [conversationStats, setConversationStats] = useState<ConversationStats | null>(null);
+  const [conversationImportData, setConversationImportData] = useState('');
+  const [showConversationImportModal, setShowConversationImportModal] = useState(false);
+
+  // Load conversation stats
+  useEffect(() => {
+    const loadConversationStats = async () => {
+      try {
+        const stats = await conversationStorage.getStats();
+        setConversationStats(stats);
+      } catch (error) {
+        console.error('Failed to load conversation stats:', error);
+      }
+    };
+
+    if (activeTab === 'conversations') {
+      loadConversationStats();
+    }
+  }, [activeTab]);
 
   // Refresh token usage
   const refreshTokenUsage = () => {
     setTokenUsage(TokenTracker.getTodayStats());
+  };
+
+  // Conversation management functions
+  const handleExportConversations = async () => {
+    try {
+      const exportData = await conversationStorage.exportConversations();
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `reader-conversations-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export conversations:', error);
+      alert('Failed to export conversations');
+    }
+  };
+
+  const handleImportConversations = async () => {
+    if (conversationImportData.trim()) {
+      try {
+        const data = JSON.parse(conversationImportData);
+        const result = await conversationStorage.importConversations(data);
+        setConversationImportData('');
+        setShowConversationImportModal(false);
+
+        // Refresh stats
+        const stats = await conversationStorage.getStats();
+        setConversationStats(stats);
+
+        alert(`Import completed: ${result.success} conversations imported, ${result.failed} failed`);
+      } catch (error) {
+        console.error('Failed to import conversations:', error);
+        alert('Failed to import conversations. Please check the file format.');
+      }
+    }
+  };
+
+  const handleClearAllConversations = async () => {
+    if (confirm('Are you sure you want to delete all conversations? This cannot be undone.')) {
+      try {
+        await conversationStorage.clearAll();
+        const stats = await conversationStorage.getStats();
+        setConversationStats(stats);
+        alert('All conversations have been deleted');
+      } catch (error) {
+        console.error('Failed to clear conversations:', error);
+        alert('Failed to delete conversations');
+      }
+    }
   };
 
   if (!isOpen) return null;
@@ -51,6 +126,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     { id: 'ai' as SettingsTab, label: 'AI & Chat', icon: Bot },
     { id: 'reading' as SettingsTab, label: 'Reading', icon: BookOpen },
     { id: 'interface' as SettingsTab, label: 'Interface', icon: Monitor },
+    { id: 'conversations' as SettingsTab, label: 'Conversations', icon: MessageSquare },
     { id: 'data' as SettingsTab, label: 'Data', icon: Database }
   ];
 
@@ -553,6 +629,146 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               </div>
             )}
 
+            {activeTab === 'conversations' && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-medium mb-4">Conversation Management</h3>
+
+                  {/* Statistics */}
+                  {conversationStats && (
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <div className="text-2xl font-bold text-blue-600">{conversationStats.totalThreads}</div>
+                        <div className="text-sm text-gray-600">Total Conversations</div>
+                      </div>
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <div className="text-2xl font-bold text-green-600">{conversationStats.totalMessages}</div>
+                        <div className="text-sm text-gray-600">Total Messages</div>
+                      </div>
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <div className="text-2xl font-bold text-purple-600">{conversationStats.threadsThisWeek}</div>
+                        <div className="text-sm text-gray-600">Conversations This Week</div>
+                      </div>
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <div className="text-2xl font-bold text-orange-600">{Math.round(conversationStats.averageMessagesPerThread)}</div>
+                        <div className="text-sm text-gray-600">Avg Messages/Thread</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Settings */}
+                  <div className="space-y-4 mb-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Retain Conversations</span>
+                        <p className="text-xs text-gray-500">Keep conversation history across sessions</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={settings.conversations.retainConversations}
+                        onChange={(e) => updateCategory('conversations', {
+                          ...settings.conversations,
+                          retainConversations: e.target.checked
+                        })}
+                        className="rounded"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Max Conversations per Section</span>
+                        <p className="text-xs text-gray-500">Limit the number of threads per chapter</p>
+                      </div>
+                      <input
+                        type="number"
+                        min="1"
+                        max="50"
+                        value={settings.conversations.maxConversationsPerSection}
+                        onChange={(e) => updateCategory('conversations', {
+                          ...settings.conversations,
+                          maxConversationsPerSection: parseInt(e.target.value)
+                        })}
+                        className="w-16 px-2 py-1 text-sm border rounded"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Auto-archive After (days)</span>
+                        <p className="text-xs text-gray-500">Automatically archive old conversations</p>
+                      </div>
+                      <input
+                        type="number"
+                        min="7"
+                        max="365"
+                        value={settings.conversations.autoArchiveAfterDays}
+                        onChange={(e) => updateCategory('conversations', {
+                          ...settings.conversations,
+                          autoArchiveAfterDays: parseInt(e.target.value)
+                        })}
+                        className="w-16 px-2 py-1 text-sm border rounded"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium">Default Thread Naming</span>
+                        <p className="text-xs text-gray-500">How new threads should be named</p>
+                      </div>
+                      <select
+                        value={settings.conversations.defaultThreadNaming}
+                        onChange={(e) => updateCategory('conversations', {
+                          ...settings.conversations,
+                          defaultThreadNaming: e.target.value as 'auto' | 'manual'
+                        })}
+                        className="px-2 py-1 text-sm border rounded"
+                      >
+                        <option value="auto">Auto-generate</option>
+                        <option value="manual">Manual naming</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Export/Import */}
+                  <div>
+                    <h4 className="font-medium mb-3">Backup & Restore</h4>
+                    <div className="space-y-3">
+                      <div className="flex space-x-3">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleExportConversations}
+                          className="flex items-center space-x-2"
+                        >
+                          <Download className="h-4 w-4" />
+                          <span>Export Conversations</span>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowConversationImportModal(true)}
+                          className="flex items-center space-x-2"
+                        >
+                          <Upload className="h-4 w-4" />
+                          <span>Import Conversations</span>
+                        </Button>
+                      </div>
+
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={handleClearAllConversations}
+                        className="flex items-center space-x-2"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span>Delete All Conversations</span>
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {activeTab === 'data' && (
               <div className="space-y-6">
                 <div>
@@ -676,6 +892,28 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 Cancel
               </Button>
               <Button onClick={handleImportSettings}>
+                Import
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConversationImportModal && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg w-full max-w-md p-6">
+            <h3 className="text-lg font-semibold mb-4">Import Conversations</h3>
+            <textarea
+              value={conversationImportData}
+              onChange={(e) => setConversationImportData(e.target.value)}
+              placeholder="Paste your conversation export JSON here..."
+              className="w-full h-32 border rounded px-3 py-2 text-sm"
+            />
+            <div className="flex justify-end space-x-2 mt-4">
+              <Button variant="ghost" onClick={() => setShowConversationImportModal(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleImportConversations}>
                 Import
               </Button>
             </div>

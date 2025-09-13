@@ -194,6 +194,7 @@ export function ReaderLayout({ document, fileName, currentBook, onGoToLibrary }:
             ) : viewMode === 'chat' ? (
               <ChatInterface
                 section={selectedSection}
+                bookId={currentBook?.id || fileName}
                 messages={messages}
                 onMessagesChange={setMessages}
               />
@@ -206,6 +207,7 @@ export function ReaderLayout({ document, fileName, currentBook, onGoToLibrary }:
                 <div className="flex-1">
                   <ChatInterface
                     section={selectedSection}
+                    bookId={currentBook?.id || fileName}
                     messages={messages}
                     onMessagesChange={setMessages}
                   />

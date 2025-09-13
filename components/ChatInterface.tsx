@@ -3,15 +3,18 @@
 import { useState, useRef, useEffect } from 'react';
 import { Section, ChatMessage } from '@/types/document';
 import { Button } from '@/components/ui/button';
-import { Send, Bot, User, Sparkles, List, HelpCircle, Lightbulb, FileSearch, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Send, Bot, User, Sparkles, List, HelpCircle, Lightbulb, FileSearch, ChevronDown, ChevronRight, AlertTriangle, Plus, MessageSquare, Settings2, Archive, Trash2 } from 'lucide-react';
 import { generateId } from '@/lib/utils';
 import { TokenTracker } from '@/lib/token-tracker';
 import { useSettings } from '@/lib/settings-storage';
+import { conversationStorage } from '@/lib/conversation-storage';
+import { ConversationThread, ConversationSummary } from '@/types/conversations';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 interface ChatInterfaceProps {
   section: Section | null;
+  bookId: string;
   messages: ChatMessage[];
   onMessagesChange: (messages: ChatMessage[]) => void;
 }
@@ -56,7 +59,7 @@ function ThinkingSection({ content }: ThinkingSectionProps) {
   );
 }
 
-export function ChatInterface({ section, messages, onMessagesChange }: ChatInterfaceProps) {
+export function ChatInterface({ section, bookId, messages, onMessagesChange }: ChatInterfaceProps) {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { settings } = useSettings();
@@ -64,14 +67,122 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
   const [isThinkingExpanded, setIsThinkingExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Thread management state
+  const [currentThread, setCurrentThread] = useState<ConversationThread | null>(null);
+  const [threadSummaries, setThreadSummaries] = useState<ConversationSummary[]>([]);
+  const [showThreadSelector, setShowThreadSelector] = useState(false);
+  const [isCreatingThread, setIsCreatingThread] = useState(false);
+  const [newThreadTitle, setNewThreadTitle] = useState('');
+
   useEffect(() => {
     if (settings.interface.autoScroll) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, settings.interface.autoScroll]);
 
+  // Load thread summaries when section changes
+  useEffect(() => {
+    if (section && bookId) {
+      loadThreadSummaries();
+      loadOrCreateDefaultThread();
+    }
+  }, [section?.id, bookId]);
+
+  // Thread management functions
+  const loadThreadSummaries = async () => {
+    try {
+      const summaries = await conversationStorage.getThreadSummaries({
+        bookId,
+        sectionId: section?.id,
+        isArchived: false
+      });
+      setThreadSummaries(summaries);
+    } catch (error) {
+      console.error('Failed to load thread summaries:', error);
+    }
+  };
+
+  const loadOrCreateDefaultThread = async () => {
+    if (!section) return;
+
+    try {
+      // Try to load existing threads
+      const summaries = await conversationStorage.getThreadSummaries({
+        bookId,
+        sectionId: section.id,
+        isArchived: false
+      });
+
+      if (summaries.length > 0) {
+        // Load the most recent thread
+        const thread = await conversationStorage.getThread(summaries[0].id);
+        if (thread) {
+          setCurrentThread(thread);
+          onMessagesChange(thread.messages);
+          return;
+        }
+      }
+
+      // Create new thread if none exist
+      const newThread = await conversationStorage.createThread(
+        bookId,
+        section.id,
+        `Discussion: ${section.title}`
+      );
+      setCurrentThread(newThread);
+      onMessagesChange([]);
+      loadThreadSummaries();
+    } catch (error) {
+      console.error('Failed to load/create thread:', error);
+    }
+  };
+
+  const createNewThread = async () => {
+    if (!section) return;
+
+    try {
+      const title = newThreadTitle.trim() || `New Discussion: ${section.title}`;
+      const thread = await conversationStorage.createThread(bookId, section.id, title);
+
+      setCurrentThread(thread);
+      onMessagesChange([]);
+      setNewThreadTitle('');
+      setIsCreatingThread(false);
+      loadThreadSummaries();
+    } catch (error) {
+      console.error('Failed to create thread:', error);
+    }
+  };
+
+  const switchToThread = async (threadId: string) => {
+    try {
+      const thread = await conversationStorage.getThread(threadId);
+      if (thread) {
+        setCurrentThread(thread);
+        onMessagesChange(thread.messages);
+        setShowThreadSelector(false);
+      }
+    } catch (error) {
+      console.error('Failed to switch thread:', error);
+    }
+  };
+
+  const deleteThread = async (threadId: string) => {
+    try {
+      await conversationStorage.deleteThread(threadId);
+      loadThreadSummaries();
+
+      // If we deleted the current thread, load another one
+      if (currentThread?.id === threadId) {
+        loadOrCreateDefaultThread();
+      }
+    } catch (error) {
+      console.error('Failed to delete thread:', error);
+    }
+  };
+
   const sendMessage = async (content: string, action?: string) => {
-    if (!section || (!content.trim() && !action)) return;
+    if (!section || (!content.trim() && !action) || !currentThread) return;
 
     const userMessage: ChatMessage = {
       id: generateId(),
@@ -85,6 +196,13 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
     onMessagesChange(updatedMessages);
     setInput('');
     setIsLoading(true);
+
+    // Save user message to thread
+    try {
+      await conversationStorage.addMessage(currentThread.id, userMessage);
+    } catch (error) {
+      console.error('Failed to save user message:', error);
+    }
 
     // Create an initial assistant message that will be updated with streaming content
     const assistantMessageId = generateId();
@@ -168,6 +286,24 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
                     totalTokens: TokenTracker.estimateTokens(inputText + accumulatedContent)
                   };
                   TokenTracker.addUsage(settings.ai.defaultProvider, estimatedTokens);
+                }
+
+                // Save final assistant message to thread
+                if (currentThread && accumulatedContent) {
+                  const finalAssistantMessage: ChatMessage = {
+                    id: assistantMessageId,
+                    role: 'assistant',
+                    content: accumulatedContent,
+                    timestamp: new Date(),
+                    sectionId: section.id,
+                  };
+
+                  try {
+                    await conversationStorage.addMessage(currentThread.id, finalAssistantMessage);
+                    loadThreadSummaries(); // Refresh summaries
+                  } catch (error) {
+                    console.error('Failed to save assistant message:', error);
+                  }
                 }
 
                 setIsLoading(false);
@@ -366,10 +502,151 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
     <div className="h-full flex flex-col bg-gray-50">
       <div className="p-4 bg-white border-b">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-medium">Chat about: {section.title}</h3>
-          <div className="text-sm text-gray-600">
-            {settings.ai.defaultProvider} • {settings.ai.defaultModels[settings.ai.defaultProvider]}
+          <div className="flex items-center space-x-2">
+            <h3 className="font-medium">Chat about: {section.title}</h3>
+            {currentThread && (
+              <div className="text-sm text-gray-500">
+                • {currentThread.title}
+              </div>
+            )}
           </div>
+          <div className="flex items-center space-x-2">
+            <div className="text-sm text-gray-600">
+              {settings.ai.defaultProvider} • {settings.ai.defaultModels[settings.ai.defaultProvider]}
+            </div>
+          </div>
+        </div>
+
+        {/* Thread Management */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center space-x-2">
+            <div className="relative">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowThreadSelector(!showThreadSelector)}
+                className="flex items-center space-x-1"
+              >
+                <MessageSquare className="h-4 w-4" />
+                <span>{currentThread ? currentThread.title : 'Select Thread'}</span>
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+
+              {showThreadSelector && (
+                <div className="absolute top-full left-0 mt-1 w-80 bg-white border rounded-lg shadow-lg z-10">
+                  <div className="p-2 border-b">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-sm">Conversation Threads</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setIsCreatingThread(true)}
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto">
+                    {threadSummaries.map((summary) => (
+                      <div
+                        key={summary.id}
+                        className={`p-3 hover:bg-gray-50 cursor-pointer border-b ${
+                          currentThread?.id === summary.id ? 'bg-blue-50' : ''
+                        }`}
+                        onClick={() => switchToThread(summary.id)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-sm truncate">
+                              {summary.title}
+                            </div>
+                            <div className="text-xs text-gray-500 truncate">
+                              {summary.messageCount} messages • {summary.updatedAt.toLocaleDateString()}
+                            </div>
+                            {summary.lastMessage && (
+                              <div className="text-xs text-gray-400 truncate mt-1">
+                                {summary.lastMessage.substring(0, 50)}...
+                              </div>
+                            )}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteThread(summary.id);
+                            }}
+                            className="text-red-600 hover:text-red-800"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+
+                    {threadSummaries.length === 0 && (
+                      <div className="p-4 text-center text-gray-500 text-sm">
+                        No conversations yet
+                      </div>
+                    )}
+                  </div>
+
+                  {isCreatingThread && (
+                    <div className="p-3 border-t bg-gray-50">
+                      <input
+                        type="text"
+                        placeholder="Thread title..."
+                        value={newThreadTitle}
+                        onChange={(e) => setNewThreadTitle(e.target.value)}
+                        className="w-full px-3 py-2 text-sm border rounded mb-2"
+                        onKeyPress={(e) => {
+                          if (e.key === 'Enter') {
+                            createNewThread();
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <div className="flex space-x-2">
+                        <Button
+                          size="sm"
+                          onClick={createNewThread}
+                          disabled={!newThreadTitle.trim()}
+                        >
+                          Create
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setIsCreatingThread(false);
+                            setNewThreadTitle('');
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsCreatingThread(true)}
+              title="New Thread"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {currentThread && (
+            <div className="text-xs text-gray-500">
+              {currentThread.messageCount} messages
+            </div>
+          )}
         </div>
 
         <div className="flex space-x-2">

@@ -114,6 +114,13 @@ export class SettingsStorage {
     this.updateSetting('data', key, value);
   }
 
+  static updateConversationSetting<T extends keyof AppSettings['conversations']>(
+    key: T,
+    value: AppSettings['conversations'][T]
+  ): void {
+    this.updateSetting('conversations', key, value);
+  }
+
   private static mergeWithDefaults(stored: any): AppSettings {
     const merged = { ...DEFAULT_SETTINGS };
 
@@ -138,6 +145,10 @@ export class SettingsStorage {
 
     if (stored.data) {
       merged.data = { ...DEFAULT_SETTINGS.data, ...stored.data };
+    }
+
+    if (stored.conversations) {
+      merged.conversations = { ...DEFAULT_SETTINGS.conversations, ...stored.conversations };
     }
 
     // Preserve version and timestamp if they exist

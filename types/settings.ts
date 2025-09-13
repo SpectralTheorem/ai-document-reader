@@ -1,3 +1,5 @@
+import { ConversationSettings } from './conversations';
+
 export interface AISettings {
   defaultProvider: 'ollama' | 'openai' | 'anthropic';
   defaultModels: {
@@ -47,6 +49,7 @@ export interface AppSettings {
   reading: ReadingSettings;
   interface: InterfaceSettings;
   data: DataSettings;
+  conversations: ConversationSettings;
   version: string;
   lastUpdated: Date;
 }
@@ -111,6 +114,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
     retainReadingProgress: true,
     enableAnalytics: false,
     autoBackup: false
+  },
+  conversations: {
+    retainConversations: true,
+    maxConversationsPerSection: 10,
+    autoArchiveAfterDays: 90,
+    exportIncludeArchived: false,
+    defaultThreadNaming: 'auto',
+    autoSaveInterval: 5000
   },
   version: '1.0.0',
   lastUpdated: new Date()
