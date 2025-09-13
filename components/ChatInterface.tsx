@@ -3,8 +3,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { Section, ChatMessage } from '@/types/document';
 import { Button } from '@/components/ui/button';
-import { Send, Bot, User, Sparkles, List, HelpCircle, Lightbulb, FileSearch, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Send, Bot, User, Sparkles, List, HelpCircle, Lightbulb, FileSearch, ChevronDown, ChevronRight, AlertTriangle, Check } from 'lucide-react';
 import { generateId } from '@/lib/utils';
+import { TokenTracker } from '@/lib/token-tracker';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -60,6 +61,8 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
   const [provider, setProvider] = useState<'ollama' | 'openai' | 'anthropic'>('ollama');
   const [model, setModel] = useState('gpt-oss');
   const [apiKey, setApiKey] = useState('');
+  const [apiConfig, setApiConfig] = useState<{hasOpenAIKey: boolean; hasAnthropicKey: boolean} | null>(null);
+  const [tokenUsage, setTokenUsage] = useState(TokenTracker.getTodayStats());
 
   const handleProviderChange = (newProvider: 'ollama' | 'openai' | 'anthropic') => {
     setProvider(newProvider);
@@ -78,6 +81,23 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    // Fetch API configuration
+    fetch('/api/ai/config')
+      .then(res => res.json())
+      .then(config => setApiConfig(config))
+      .catch(err => console.error('Failed to fetch API config:', err));
+  }, []);
+
+  useEffect(() => {
+    // Update token usage periodically
+    const interval = setInterval(() => {
+      setTokenUsage(TokenTracker.getTodayStats());
+    }, 5000); // Update every 5 seconds
+
+    return () => clearInterval(interval);
+  }, []);
 
   const sendMessage = async (content: string, action?: string) => {
     if (!section || (!content.trim() && !action)) return;
@@ -114,20 +134,22 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
         content: `You are helping analyze the following chapter from a book. Chapter title: "${section.title}". Chapter content: ${section.content?.substring(0, 3000)}...`
       };
 
+      const processedMessages = [
+        contextMessage,
+        ...updatedMessages.map(m => ({
+          role: m.role,
+          content: m.content
+        }))
+      ];
+
       const response = await fetch('/api/ai/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [
-            contextMessage,
-            ...updatedMessages.map(m => ({
-              role: m.role,
-              content: m.content
-            }))
-          ],
+          messages: processedMessages,
           provider,
           model,
-          apiKey: provider !== 'ollama' ? apiKey : undefined,
+          apiKey: provider !== 'ollama' ? (apiKey || undefined) : undefined,
           action
         }),
       });
@@ -165,6 +187,19 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
                   accumulatedContent += `<thinking>${currentThinkingBuffer}</thinking>`;
                   currentThinkingBuffer = '';
                 }
+
+                // Track token usage on completion (client-side only)
+                if (accumulatedContent) {
+                  const inputText = processedMessages.map((m: any) => m.content).join(' ');
+                  const estimatedTokens = {
+                    inputTokens: TokenTracker.estimateTokens(inputText),
+                    outputTokens: TokenTracker.estimateTokens(accumulatedContent),
+                    totalTokens: TokenTracker.estimateTokens(inputText + accumulatedContent)
+                  };
+                  TokenTracker.addUsage(provider, estimatedTokens);
+                  setTokenUsage(TokenTracker.getTodayStats());
+                }
+
                 setIsLoading(false);
                 return;
               }
@@ -189,6 +224,13 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
                   }
                   console.log('📝 Adding regular content:', parsed.content);
                   accumulatedContent += parsed.content;
+                } else if (parsed.type === 'token_usage') {
+                  // Handle token usage data from server
+                  console.log('📊 Received token usage:', parsed.usage);
+                  if (parsed.usage) {
+                    TokenTracker.addUsage(provider, parsed.usage);
+                    setTokenUsage(TokenTracker.getTodayStats());
+                  }
                 } else if (parsed.content) {
                   // Fallback for old format
                   if (isInThinkingMode && currentThinkingBuffer) {
@@ -241,6 +283,8 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
       );
     } finally {
       setIsLoading(false);
+      // Refresh token usage after message
+      setTokenUsage(TokenTracker.getTodayStats());
     }
   };
 
@@ -357,15 +401,25 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-medium">Chat about: {section.title}</h3>
           <div className="flex items-center space-x-2">
-            <select
-              value={provider}
-              onChange={(e) => handleProviderChange(e.target.value as any)}
-              className="text-sm border rounded px-2 py-1"
-            >
-              <option value="ollama">Ollama (Local)</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-            </select>
+            <div className="relative">
+              <select
+                value={provider}
+                onChange={(e) => handleProviderChange(e.target.value as any)}
+                className="text-sm border rounded px-2 py-1 pr-8"
+              >
+                <option value="ollama">Ollama (Local)</option>
+                <option value="openai">
+                  OpenAI {apiConfig?.hasOpenAIKey ? '✓' : ''}
+                </option>
+                <option value="anthropic">
+                  Anthropic {apiConfig?.hasAnthropicKey ? '✓' : ''}
+                </option>
+              </select>
+              {((provider === 'openai' && apiConfig?.hasOpenAIKey) ||
+                (provider === 'anthropic' && apiConfig?.hasAnthropicKey)) && (
+                <Check className="absolute right-1 top-1/2 transform -translate-y-1/2 h-3 w-3 text-green-600 pointer-events-none" />
+              )}
+            </div>
             {provider === 'ollama' ? (
               <input
                 type="text"
@@ -397,15 +451,50 @@ export function ChatInterface({ section, messages, onMessagesChange }: ChatInter
                 </select>
                 <input
                   type="password"
-                  placeholder="API Key"
+                  placeholder={
+                    (provider === 'openai' && apiConfig?.hasOpenAIKey) ||
+                    (provider === 'anthropic' && apiConfig?.hasAnthropicKey)
+                      ? 'Using env key'
+                      : 'API Key'
+                  }
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="text-sm border rounded px-2 py-1 w-32"
+                  disabled={
+                    (provider === 'openai' && apiConfig?.hasOpenAIKey) ||
+                    (provider === 'anthropic' && apiConfig?.hasAnthropicKey)
+                  }
                 />
               </>
             )}
           </div>
         </div>
+
+        {/* Token Usage Display */}
+        <div className="mb-3 p-2 bg-gray-100 rounded-lg">
+          <div className="flex items-center justify-between text-xs text-gray-600">
+            <span className="font-medium">Today's Token Usage:</span>
+            <div className="flex space-x-4">
+              <span>Input: {tokenUsage.totalInputTokens.toLocaleString()}</span>
+              <span>Output: {tokenUsage.totalOutputTokens.toLocaleString()}</span>
+              <span className="font-medium">Total: {tokenUsage.grandTotal.toLocaleString()}</span>
+            </div>
+          </div>
+          {tokenUsage.grandTotal > 0 && (
+            <div className="mt-1 flex space-x-3 text-xs text-gray-500">
+              {tokenUsage.openai.totalTokens > 0 && (
+                <span>OpenAI: {tokenUsage.openai.totalTokens.toLocaleString()}</span>
+              )}
+              {tokenUsage.anthropic.totalTokens > 0 && (
+                <span>Anthropic: {tokenUsage.anthropic.totalTokens.toLocaleString()}</span>
+              )}
+              {tokenUsage.ollama.totalTokens > 0 && (
+                <span>Ollama: {tokenUsage.ollama.totalTokens.toLocaleString()}</span>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="flex space-x-2">
           {AI_ACTIONS.map((action) => {
             const Icon = action.icon;

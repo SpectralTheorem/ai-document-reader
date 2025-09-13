@@ -3,89 +3,118 @@
 import { useState, useEffect } from 'react';
 import { DocumentUploader } from '@/components/DocumentUploader';
 import { ReaderLayout } from '@/components/ReaderLayout';
+import { LibrarySidebar } from '@/components/LibrarySidebar';
 import { ParsedDocument } from '@/types/document';
+import { LibraryBook } from '@/types/library';
+import { libraryStorage } from '@/lib/library-storage';
+import { generateId } from '@/lib/utils';
 
 export default function Home() {
   const [document, setDocument] = useState<ParsedDocument | null>(null);
   const [fileName, setFileName] = useState<string>('');
-  const [isAutoLoading, setIsAutoLoading] = useState(false);
+  const [currentBookId, setCurrentBookId] = useState<string | null>(null);
+  const [showUploader, setShowUploader] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleDocumentUploaded = (doc: ParsedDocument, file: string) => {
-    setDocument(doc);
-    setFileName(file);
-  };
-
-  // Debug auto-upload functionality
-  useEffect(() => {
-    const autoLoadDebugBook = async () => {
-      // Only auto-load in development and if no document is already loaded
-      if (process.env.NODE_ENV !== 'production' && !document && !isAutoLoading) {
-        console.log('🔧 Debug mode: Auto-loading booky_book.epub...');
-        setIsAutoLoading(true);
-        
-        try {
-          const response = await fetch('/api/debug/book');
-          if (response.ok) {
-            const blob = await response.blob();
-            const file = new File([blob], 'booky_book.epub', { type: 'application/epub+zip' });
-            
-            const formData = new FormData();
-            formData.append('file', file);
-            
-            const uploadResponse = await fetch('/api/upload', {
-              method: 'POST',
-              body: formData,
-            });
-            
-            if (uploadResponse.ok) {
-              const result = await uploadResponse.json();
-              console.log('✅ Debug book auto-loaded successfully:', {
-                hasResult: !!result,
-                hasDocument: !!result.document,
-                hasSections: !!result.document?.sections,
-                sectionsLength: result.document?.sections?.length || 0
-              });
-              handleDocumentUploaded(result.document, 'booky_book.epub');
-            } else {
-              console.log('❌ Failed to process debug book');
-            }
-          } else {
-            console.log('📝 Debug book not available - skipping auto-load');
-          }
-        } catch (error) {
-          console.log('🔍 Debug auto-load failed (this is normal):', error);
-        } finally {
-          setIsAutoLoading(false);
-        }
-      }
+  const handleDocumentUploaded = async (doc: ParsedDocument, file: string) => {
+    // Create a library entry for the uploaded book
+    const bookId = generateId();
+    const libraryBook: LibraryBook = {
+      id: bookId,
+      fileName: file,
+      title: doc.metadata.title || file,
+      author: doc.metadata.author,
+      coverImage: doc.metadata.coverImage,
+      addedDate: new Date(),
+      lastOpened: new Date(),
     };
 
-    autoLoadDebugBook();
-  }, [document, isAutoLoading]);
+    // Save to library
+    await libraryStorage.addBook(libraryBook, doc);
+    
+    // Trigger library update
+    window.dispatchEvent(new Event('library-updated'));
 
-  if (!document) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        {isAutoLoading ? (
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600">Auto-loading debug book...</p>
-          </div>
-        ) : (
-          <DocumentUploader onDocumentUploaded={handleDocumentUploaded} />
-        )}
-      </div>
-    );
-  }
+    // Set as current document
+    setDocument(doc);
+    setFileName(file);
+    setCurrentBookId(bookId);
+    setShowUploader(false);
+  };
+
+  const handleSelectBook = async (bookId: string) => {
+    setIsLoading(true);
+    try {
+      const doc = await libraryStorage.getDocument(bookId);
+      const books = await libraryStorage.getBooks();
+      const book = books.find(b => b.id === bookId);
+      
+      if (doc && book) {
+        setDocument(doc);
+        setFileName(book.fileName);
+        setCurrentBookId(bookId);
+        setShowUploader(false);
+        
+        // Update last opened
+        await libraryStorage.updateBookProgress(bookId, '', 0);
+      }
+    } catch (error) {
+      console.error('Failed to load book:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleReset = () => {
+    setDocument(null);
+    setFileName('');
+    setCurrentBookId(null);
+    setShowUploader(true);
+  };
+
+  const handleUploadClick = () => {
+    setShowUploader(true);
+    setDocument(null);
+    setFileName('');
+  };
 
   return (
-    <ReaderLayout 
-      document={document} 
-      fileName={fileName}
-      onReset={() => {
-        setDocument(null);
-        setFileName('');
-      }}
-    />
+    <div className="h-screen flex">
+      {/* Library Sidebar */}
+      <LibrarySidebar 
+        onSelectBook={handleSelectBook}
+        onUploadClick={handleUploadClick}
+        currentBookId={currentBookId || undefined}
+      />
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col">
+        {isLoading ? (
+          <div className="flex-1 flex items-center justify-center bg-gray-50">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading book...</p>
+            </div>
+          </div>
+        ) : document ? (
+          <ReaderLayout 
+            document={document} 
+            fileName={fileName}
+            onReset={handleReset}
+          />
+        ) : showUploader ? (
+          <div className="flex-1 flex items-center justify-center bg-gray-50">
+            <DocumentUploader onDocumentUploaded={handleDocumentUploaded} />
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center bg-gray-50">
+            <div className="text-center text-gray-500">
+              <p className="text-lg mb-4">Welcome to your reading library</p>
+              <p>Select a book from the library or upload a new one</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

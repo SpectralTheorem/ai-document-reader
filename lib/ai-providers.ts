@@ -10,6 +10,11 @@ export interface AIConfig {
 export interface AIResponse {
   content: string;
   error?: string;
+  tokenUsage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
 }
 
 export class AIProvider {
@@ -74,7 +79,13 @@ export class AIProvider {
 
   private async chatWithOpenAI(messages: Array<{ role: string; content: string }>): Promise<AIResponse> {
     if (!this.config.apiKey) {
-      throw new Error('OpenAI API key is required. Please enter your API key in the settings.');
+      // Check for environment variable
+      const envKey = process.env.OPENAI_API_KEY;
+      if (envKey) {
+        this.config.apiKey = envKey;
+      } else {
+        throw new Error('OpenAI API key is required. Please enter your API key in the settings.');
+      }
     }
 
     try {
@@ -92,12 +103,25 @@ export class AIProvider {
         }
       );
 
-      return {
+      const result: AIResponse = {
         content: response.data.choices[0].message.content
       };
+
+      // Track token usage if available
+      if (response.data.usage) {
+        const tokenUsage = {
+          inputTokens: response.data.usage.prompt_tokens || 0,
+          outputTokens: response.data.usage.completion_tokens || 0,
+          totalTokens: response.data.usage.total_tokens || 0
+        };
+
+        result.tokenUsage = tokenUsage;
+      }
+
+      return result;
     } catch (error: any) {
       let errorMessage = 'OpenAI API error';
-      
+
       if (error.response) {
         const status = error.response.status;
         if (status === 401) {
@@ -111,21 +135,27 @@ export class AIProvider {
         } else {
           errorMessage = `OpenAI API error (${status})`;
         }
-        
+
         if (error.response.data?.error?.message) {
           errorMessage += ` Details: ${error.response.data.error.message}`;
         }
       } else if (error.message) {
         errorMessage += `: ${error.message}`;
       }
-      
+
       throw new Error(errorMessage);
     }
   }
 
   private async chatWithAnthropic(messages: Array<{ role: string; content: string }>): Promise<AIResponse> {
     if (!this.config.apiKey) {
-      throw new Error('Anthropic API key is required');
+      // Check for environment variable
+      const envKey = process.env.ANTHROPIC_API_KEY;
+      if (envKey) {
+        this.config.apiKey = envKey;
+      } else {
+        throw new Error('Anthropic API key is required');
+      }
     }
 
     const response = await axios.post(
@@ -144,9 +174,22 @@ export class AIProvider {
       }
     );
 
-    return {
+    const result: AIResponse = {
       content: response.data.content[0].text
     };
+
+    // Track token usage if available
+    if (response.data.usage) {
+      const tokenUsage = {
+        inputTokens: response.data.usage.input_tokens || 0,
+        outputTokens: response.data.usage.output_tokens || 0,
+        totalTokens: (response.data.usage.input_tokens || 0) + (response.data.usage.output_tokens || 0)
+      };
+
+      result.tokenUsage = tokenUsage;
+    }
+
+    return result;
   }
 
   private async *streamWithOllama(messages: Array<{ role: string; content: string }>): AsyncGenerator<any, void, unknown> {
@@ -242,7 +285,13 @@ export class AIProvider {
 
   private async *streamWithOpenAI(messages: Array<{ role: string; content: string }>): AsyncGenerator<any, void, unknown> {
     if (!this.config.apiKey) {
-      throw new Error('OpenAI API key is required. Please enter your API key in the settings.');
+      // Check for environment variable
+      const envKey = process.env.OPENAI_API_KEY;
+      if (envKey) {
+        this.config.apiKey = envKey;
+      } else {
+        throw new Error('OpenAI API key is required. Please enter your API key in the settings.');
+      }
     }
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
