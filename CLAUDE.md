@@ -70,8 +70,11 @@ This is a Next.js 15 application with TypeScript that serves as an AI-powered do
 - `DocumentUploader` - File upload with progress visualization
 
 ### 🛠️ **Debug & Development**
-- `/debug` - **Standalone debug console page** for comprehensive multi-agent orchestration visualization
-- Real-time agent execution monitoring (WebSocket support planned)
+- `/debug` - **Enhanced debug console page** with streamlined book selection and query templates
+- **BookSelector** component - Client-side book selection from IndexedDB with visual metadata
+- **QueryTemplates** component - 14+ categorized research query presets with recent history
+- **Session Persistence** - Remembers last book/query selections for faster debugging iteration
+- Real-time agent execution monitoring via WebSocket integration
 - Interactive agent result exploration and debugging capabilities
 
 ## API Endpoints
@@ -89,7 +92,9 @@ This is a Next.js 15 application with TypeScript that serves as an AI-powered do
 - `/api/test-anthropic` - API validation and testing endpoint
 
 ### Development & Debug
-- `/debug` - Standalone debug console for agent orchestration visualization
+- `/debug` - **Enhanced debug console** with book selection and query templates
+- `/api/debug/session` - Debug session management for multi-agent testing
+- `/api/debug/ws` - WebSocket endpoint for real-time debug updates
 
 ## File Structure
 
@@ -101,6 +106,8 @@ app/                     # Next.js App Router pages and API routes
 │   └── ai/              # AI provider integration
 ├── debug/               # Standalone debug console page
 components/              # React components with UI primitives in ui/
+├── BookSelector.tsx     # Enhanced book selection component for debug console
+├── QueryTemplates.tsx   # Categorized query templates with recent history
 lib/
 ├── agents/              # Complete multi-agent research system
 │   ├── BookResearchOrchestrator.ts
@@ -113,6 +120,7 @@ lib/
 ├── ai-providers.ts      # Unified AI provider interface
 └── config.ts            # Configuration management system
 types/                   # TypeScript type definitions
+├── debug-presets.ts     # Query template system with 7 categories and session persistence
 uploads/                 # Temporary file storage directory
 config.yaml              # Central configuration for models and providers
 ```
@@ -168,6 +176,9 @@ Optional API keys configured in `.env`:
 - **Evaluative**: "Is X well-supported?" → EvidenceAgent + AnalysisAgent + ContextAgent
 
 ### Debug Console Features
+- **Enhanced Book Selection**: Visual dropdown with book covers, metadata, and recently used books
+- **Query Template System**: 14+ categorized research presets across 7 categories (quick, character, theme, argument, comparative, evidence, structure)
+- **Session Persistence**: Automatic saving of last book/query selections and recent query history
 - **Agent Orchestration Visualization**: Real-time view of agent execution
 - **Individual Agent Outputs**: Inspect raw results before synthesis
 - **Performance Monitoring**: Execution timing and confidence metrics

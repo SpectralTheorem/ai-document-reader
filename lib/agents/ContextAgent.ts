@@ -1,13 +1,29 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BaseAgent } from './BaseAgent';
 import { ResearchQuery, BookContext, AgentResult, ContextualInsight } from './types';
+import { debugEmitter } from './debug-types';
 
 export class ContextAgent extends BaseAgent {
   name = 'ContextAgent';
   description = 'Specialized agent for understanding book structure, chapter relationships, and thematic organization';
 
-  async execute(query: ResearchQuery, context: BookContext): Promise<AgentResult> {
+  async execute(query: ResearchQuery, context: BookContext, sessionId?: string): Promise<AgentResult> {
     const startTime = Date.now();
+    const agentId = `${this.name}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+
+    // Emit debug event for agent start
+    if (sessionId) {
+      debugEmitter.emit({
+        type: 'agent_started',
+        timestamp: startTime,
+        sessionId,
+        data: {
+          agentId,
+          agentName: this.name,
+          query: query.text
+        }
+      });
+    }
 
     const systemPrompt = `You are an expert in understanding book structure and contextual relationships. Your expertise includes:
 
@@ -55,7 +71,7 @@ ${bookContent}
 Focus on understanding how the relevant content fits into the book's overall structure and purpose.`;
 
     try {
-      const response = await this.callClaude(systemPrompt, userPrompt, true);
+      const response = await this.callClaude(systemPrompt, userPrompt, true, sessionId, agentId);
 
       const findings = this.parseContextFindings(response);
       const confidence = this.extractConfidence(response);
@@ -63,15 +79,50 @@ Focus on understanding how the relevant content fits into the book's overall str
 
       const executionTime = Date.now() - startTime;
 
-      return this.createAgentResult(
+      const result = this.createAgentResult(
         query.id,
         findings,
         confidence,
         sources,
         executionTime
       );
+
+      // Emit debug event for agent completion
+      if (sessionId) {
+        debugEmitter.emit({
+          type: 'agent_completed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentId,
+            agentName: this.name,
+            duration: executionTime,
+            findings,
+            confidence,
+            sources,
+            rawOutput: response
+          }
+        });
+      }
+
+      return result;
     } catch (error) {
       console.error('ContextAgent execution failed:', error);
+
+      // Emit debug event for agent failure
+      if (sessionId) {
+        debugEmitter.emit({
+          type: 'agent_failed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentId,
+            agentName: this.name,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        });
+      }
+
       throw error;
     }
   }

@@ -1,13 +1,29 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BaseAgent } from './BaseAgent';
 import { ResearchQuery, BookContext, AgentResult, CrossReference } from './types';
+import { debugEmitter } from './debug-types';
 
 export class AnalysisAgent extends BaseAgent {
   name = 'AnalysisAgent';
   description = 'Specialized agent for cross-referencing, pattern analysis, and synthesis of connections between different parts of the book';
 
-  async execute(query: ResearchQuery, context: BookContext): Promise<AgentResult> {
+  async execute(query: ResearchQuery, context: BookContext, sessionId?: string): Promise<AgentResult> {
     const startTime = Date.now();
+    const agentId = `${this.name}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+
+    // Emit debug event for agent start
+    if (sessionId) {
+      debugEmitter.emit({
+        type: 'agent_started',
+        timestamp: startTime,
+        sessionId,
+        data: {
+          agentId,
+          agentName: this.name,
+          query: query.text
+        }
+      });
+    }
 
     const systemPrompt = `You are an expert research analyst specialized in finding connections, patterns, and relationships within a book. Your expertise includes:
 
@@ -54,7 +70,7 @@ ${bookContent}
 Focus on finding how different sections relate to each other, how arguments develop, and what larger patterns emerge from the content.`;
 
     try {
-      const response = await this.callClaude(systemPrompt, userPrompt, true);
+      const response = await this.callClaude(systemPrompt, userPrompt, true, sessionId, agentId);
 
       const findings = this.parseAnalysisFindings(response);
       const confidence = this.extractConfidence(response);
@@ -62,15 +78,50 @@ Focus on finding how different sections relate to each other, how arguments deve
 
       const executionTime = Date.now() - startTime;
 
-      return this.createAgentResult(
+      const result = this.createAgentResult(
         query.id,
         findings,
         confidence,
         sources,
         executionTime
       );
+
+      // Emit debug event for agent completion
+      if (sessionId) {
+        debugEmitter.emit({
+          type: 'agent_completed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentId,
+            agentName: this.name,
+            duration: executionTime,
+            findings,
+            confidence,
+            sources,
+            rawOutput: response
+          }
+        });
+      }
+
+      return result;
     } catch (error) {
       console.error('AnalysisAgent execution failed:', error);
+
+      // Emit debug event for agent failure
+      if (sessionId) {
+        debugEmitter.emit({
+          type: 'agent_failed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentId,
+            agentName: this.name,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        });
+      }
+
       throw error;
     }
   }

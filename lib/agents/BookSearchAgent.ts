@@ -1,13 +1,34 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BaseAgent } from './BaseAgent';
 import { ResearchQuery, BookContext, AgentResult, SearchResult } from './types';
+import { debugEmitter, AgentDebugInfo } from './debug-types';
 
 export class BookSearchAgent extends BaseAgent {
   name = 'BookSearchAgent';
   description = 'Specialized agent for semantic content discovery and passage retrieval across the entire book';
 
-  async execute(query: ResearchQuery, context: BookContext): Promise<AgentResult> {
+  async execute(query: ResearchQuery, context: BookContext, sessionId?: string): Promise<AgentResult> {
     const startTime = Date.now();
+    const agentId = `${this.name}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+
+    // Emit debug event for agent start
+    console.log(`🤖 ${this.name} starting with sessionId: ${sessionId || 'NONE'}`);
+    if (sessionId) {
+      console.log(`📡 ${this.name} emitting agent_started event`);
+      console.log('🔧 BookSearchAgent DebugEmitter instance:', debugEmitter.constructor.name);
+      debugEmitter.emit({
+        type: 'agent_started',
+        timestamp: startTime,
+        sessionId,
+        data: {
+          agentId,
+          agentName: this.name,
+          query: query.text
+        }
+      });
+    } else {
+      console.log(`⚠️ ${this.name} not emitting debug events - no sessionId`);
+    }
 
     const systemPrompt = `You are an expert research assistant specialized in finding relevant passages and content within a book. Your task is to:
 
@@ -43,7 +64,7 @@ Query Type: ${query.type}
 Focus on finding the most relevant sections that directly address this query.`;
 
     try {
-      const response = await this.callClaude(systemPrompt, userPrompt, true);
+      const response = await this.callClaude(systemPrompt, userPrompt, true, sessionId, agentId);
 
       // Parse the response to extract structured findings
       const findings = this.parseSearchFindings(response);
@@ -52,7 +73,7 @@ Focus on finding the most relevant sections that directly address this query.`;
 
       const executionTime = Date.now() - startTime;
 
-      return this.createAgentResult(
+      const result = this.createAgentResult(
         query.id,
         findings,
         confidence,
@@ -60,8 +81,43 @@ Focus on finding the most relevant sections that directly address this query.`;
         executionTime,
         this.extractRelatedQueries(response)
       );
+
+      // Emit debug event for agent completion
+      if (sessionId) {
+        debugEmitter.emit({
+          type: 'agent_completed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentId,
+            agentName: this.name,
+            duration: executionTime,
+            findings,
+            confidence,
+            sources,
+            rawOutput: response
+          }
+        });
+      }
+
+      return result;
     } catch (error) {
       console.error('BookSearchAgent execution failed:', error);
+
+      // Emit debug event for agent failure
+      if (sessionId) {
+        debugEmitter.emit({
+          type: 'agent_failed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentId,
+            agentName: this.name,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        });
+      }
+
       throw error;
     }
   }

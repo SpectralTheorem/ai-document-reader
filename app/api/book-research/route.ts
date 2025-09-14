@@ -6,7 +6,7 @@ import { BookContext } from '@/lib/agents/types';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { query, bookId, apiKey, mode = 'full' } = body;
+    const { query, bookId, apiKey, mode = 'full', enableDebugging = false, sessionId } = body;
 
     if (!query) {
       return NextResponse.json(
@@ -22,9 +22,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!apiKey) {
+    // Use provided API key or fall back to environment variable for debug console
+    const effectiveApiKey = apiKey || process.env.ANTHROPIC_API_KEY;
+
+    if (!effectiveApiKey) {
       return NextResponse.json(
-        { error: 'API key is required for research functionality' },
+        { error: 'API key is required for research functionality. Please provide it in the request or set ANTHROPIC_API_KEY environment variable.' },
         { status: 400 }
       );
     }
@@ -45,7 +48,7 @@ export async function POST(request: NextRequest) {
     };
 
     // Initialize the orchestrator
-    const orchestrator = new BookResearchOrchestrator(apiKey);
+    const orchestrator = new BookResearchOrchestrator(effectiveApiKey);
 
     // Conduct research based on mode
     let result;
@@ -62,7 +65,7 @@ export async function POST(request: NextRequest) {
       };
     } else {
       // Full research mode with all agents
-      result = await orchestrator.conductResearch(query, bookContext);
+      result = await orchestrator.conductResearch(query, bookContext, enableDebugging, sessionId);
       result.mode = 'full';
     }
 

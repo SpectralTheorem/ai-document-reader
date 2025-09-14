@@ -5,6 +5,7 @@ export interface BookContext {
   bookId: string;
   document: ParsedDocument;
   currentSectionId?: string;
+  debugSettings?: import('@/types/debug-settings').DebugSettings | null;
 }
 
 export interface ResearchQuery {

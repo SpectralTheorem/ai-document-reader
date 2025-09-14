@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getDefaultModel } from '@/lib/config';
+import { debugEmitter, DebugSession, AgentDebugInfo } from './debug-types';
 import { BookSearchAgent } from './BookSearchAgent';
 import { EvidenceAgent } from './EvidenceAgent';
 import { AnalysisAgent } from './AnalysisAgent';
@@ -12,6 +13,7 @@ import {
   AgentResult
 } from './types';
 import { generateId } from '@/lib/utils';
+import { DebugSettings, DEFAULT_DEBUG_SETTINGS } from '@/types/debug-settings';
 
 export class BookResearchOrchestrator {
   private anthropic: Anthropic;
@@ -19,6 +21,7 @@ export class BookResearchOrchestrator {
   private evidenceAgent: EvidenceAgent;
   private analysisAgent: AnalysisAgent;
   private contextAgent: ContextAgent;
+  private currentSession: DebugSession | null = null;
 
   constructor(apiKey: string) {
     this.anthropic = new Anthropic({ apiKey });
@@ -32,16 +35,65 @@ export class BookResearchOrchestrator {
 
   async conductResearch(
     userQuery: string,
-    context: BookContext
+    context: BookContext,
+    enableDebug: boolean = false,
+    providedSessionId?: string,
+    settings?: DebugSettings | null
   ): Promise<ResearchResponse> {
     const startTime = Date.now();
+    const sessionId = providedSessionId || generateId();
 
     try {
-      // Step 1: Analyze the query to determine approach
-      const researchQuery = await this.analyzeQuery(userQuery);
+      // Initialize debug session if enabled
+      if (enableDebug) {
+        this.currentSession = {
+          id: sessionId,
+          query: userQuery,
+          bookId: context.bookId,
+          timestamp: startTime,
+          agents: [],
+          status: 'analyzing'
+        };
 
-      // Step 2: Run specialized agents in parallel
-      const agentPromises = this.determineAgentsToRun(researchQuery, context);
+        debugEmitter.emit({
+          type: 'session_started',
+          timestamp: startTime,
+          sessionId,
+          data: {
+            query: userQuery,
+            bookId: context.bookId,
+            session: this.currentSession
+          }
+        });
+      }
+
+      // Step 1: Analyze the query to determine approach
+      const researchQuery = await this.analyzeQuery(userQuery, sessionId);
+
+      // Update debug session with analysis results
+      if (enableDebug && this.currentSession) {
+        this.currentSession.queryType = researchQuery.type;
+        this.currentSession.queryAnalysis = {
+          originalQuery: userQuery,
+          analyzedType: researchQuery.type,
+          priority: researchQuery.priority || 5,
+          reasoning: `Query classified as ${researchQuery.type}`,
+          selectedAgents: this.getAgentNamesForType(researchQuery.type)
+        };
+        this.currentSession.status = 'executing';
+
+        debugEmitter.emit({
+          type: 'query_analyzed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            analysis: this.currentSession.queryAnalysis
+          }
+        });
+      }
+
+      // Step 2: Run specialized agents in parallel with debug tracking
+      const agentPromises = this.determineAgentsToRun(researchQuery, context, sessionId, enableDebug, settings);
       const agentResults = await Promise.allSettled(agentPromises);
 
       // Step 3: Extract successful results and handle failures
@@ -62,10 +114,24 @@ export class BookResearchOrchestrator {
       }
 
       // Step 4: Synthesize all findings into a comprehensive response
+      if (enableDebug && this.currentSession) {
+        this.currentSession.status = 'synthesizing';
+        debugEmitter.emit({
+          type: 'synthesis_started',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentResults: successfulResults.length,
+            failedAgents: failedResults.length
+          }
+        });
+      }
+
       const synthesis = await this.synthesizeFindings(
         researchQuery,
         successfulResults,
-        context
+        context,
+        sessionId
       );
 
       const totalExecutionTime = Date.now() - startTime;
@@ -73,6 +139,27 @@ export class BookResearchOrchestrator {
       // Step 5: Calculate overall confidence and extract sources
       const overallConfidence = this.calculateOverallConfidence(successfulResults);
       const allSources = this.consolidateSources(successfulResults);
+
+      // Complete debug session
+      if (enableDebug && this.currentSession) {
+        this.currentSession.status = 'completed';
+        this.currentSession.totalDuration = totalExecutionTime;
+
+        debugEmitter.emit({
+          type: 'session_completed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            session: this.currentSession,
+            results: {
+              synthesis,
+              confidence: overallConfidence,
+              sources: allSources.length,
+              totalDuration: totalExecutionTime
+            }
+          }
+        });
+      }
 
       return {
         synthesis,
@@ -84,11 +171,25 @@ export class BookResearchOrchestrator {
 
     } catch (error) {
       console.error('Research orchestration failed:', error);
+
+      // Emit debug event for session failure
+      if (enableDebug) {
+        debugEmitter.emit({
+          type: 'session_failed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            duration: Date.now() - startTime
+          }
+        });
+      }
+
       throw new Error(`Research failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  private async analyzeQuery(userQuery: string): Promise<ResearchQuery> {
+  private async analyzeQuery(userQuery: string, sessionId?: string): Promise<ResearchQuery> {
     const systemPrompt = `You are a query analyzer. Categorize this research query and determine its type.
 
 Query types:
@@ -153,107 +254,84 @@ Priority: 1-10 scale where 10 is highest priority/complexity`;
 
   private determineAgentsToRun(
     query: ResearchQuery,
-    context: BookContext
+    context: BookContext,
+    sessionId?: string,
+    enableDebug: boolean = false,
+    settings?: DebugSettings | null
   ): Promise<AgentResult>[] {
     const agents: Promise<AgentResult>[] = [];
+    const enabledAgents = settings?.enabledAgents || {
+      bookSearch: true,
+      evidence: true,
+      analysis: true,
+      context: true
+    };
 
-    // Always run search agent for content discovery
-    agents.push(this.searchAgent.execute(query, context));
+    // Add agents based on settings, still respecting query type logic
+    if (enabledAgents.bookSearch) {
+      agents.push(this.searchAgent.execute(query, context, sessionId));
+    }
 
-    // Determine which other agents to run based on query type
+    // Determine which other agents to run based on query type and settings
     switch (query.type) {
       case QueryType.FACTUAL:
-        agents.push(this.evidenceAgent.execute(query, context));
-        agents.push(this.contextAgent.execute(query, context));
+        if (enabledAgents.evidence) {
+          agents.push(this.evidenceAgent.execute(query, context, sessionId));
+        }
+        if (enabledAgents.context) {
+          agents.push(this.contextAgent.execute(query, context, sessionId));
+        }
         break;
 
       case QueryType.ANALYTICAL:
-        agents.push(this.analysisAgent.execute(query, context));
-        agents.push(this.contextAgent.execute(query, context));
-        agents.push(this.evidenceAgent.execute(query, context));
+        if (enabledAgents.analysis) {
+          agents.push(this.analysisAgent.execute(query, context, sessionId));
+        }
+        if (enabledAgents.context) {
+          agents.push(this.contextAgent.execute(query, context, sessionId));
+        }
+        if (enabledAgents.evidence) {
+          agents.push(this.evidenceAgent.execute(query, context, sessionId));
+        }
         break;
 
       case QueryType.COMPARATIVE:
-        agents.push(this.analysisAgent.execute(query, context));
-        agents.push(this.contextAgent.execute(query, context));
+        if (enabledAgents.analysis) {
+          agents.push(this.analysisAgent.execute(query, context, sessionId));
+        }
+        if (enabledAgents.context) {
+          agents.push(this.contextAgent.execute(query, context, sessionId));
+        }
         break;
 
       case QueryType.EVALUATIVE:
-        agents.push(this.evidenceAgent.execute(query, context));
-        agents.push(this.analysisAgent.execute(query, context));
-        agents.push(this.contextAgent.execute(query, context));
+        if (enabledAgents.evidence) {
+          agents.push(this.evidenceAgent.execute(query, context, sessionId));
+        }
+        if (enabledAgents.analysis) {
+          agents.push(this.analysisAgent.execute(query, context, sessionId));
+        }
+        if (enabledAgents.context) {
+          agents.push(this.contextAgent.execute(query, context, sessionId));
+        }
         break;
 
       default:
-        // Run all agents for unknown types
-        agents.push(this.evidenceAgent.execute(query, context));
-        agents.push(this.analysisAgent.execute(query, context));
-        agents.push(this.contextAgent.execute(query, context));
+        // Run enabled agents for unknown types
+        if (enabledAgents.evidence) {
+          agents.push(this.evidenceAgent.execute(query, context, sessionId));
+        }
+        if (enabledAgents.analysis) {
+          agents.push(this.analysisAgent.execute(query, context, sessionId));
+        }
+        if (enabledAgents.context) {
+          agents.push(this.contextAgent.execute(query, context, sessionId));
+        }
     }
 
     return agents;
   }
 
-  private async synthesizeFindings(
-    query: ResearchQuery,
-    agentResults: AgentResult[],
-    context: BookContext
-  ): Promise<string> {
-    const systemPrompt = `You are a research synthesis expert. Your task is to combine findings from multiple research agents into a comprehensive, coherent response.
-
-Given:
-- Original query: "${query.text}"
-- Query type: ${query.type}
-- Multiple agent findings
-
-Create a response that:
-1. Directly addresses the original query
-2. Integrates insights from all agents smoothly
-3. Maintains proper attribution to sources
-4. Provides a logical flow of information
-5. Highlights the most important findings
-6. Notes any limitations or gaps in available information
-
-Write in a natural, conversational tone as if you're an expert who has thoroughly studied this book.`;
-
-    const agentSummary = agentResults.map(result =>
-      `## ${result.agentName} (Confidence: ${result.confidence}):\n${result.findings.join('\n\n')}`
-    ).join('\n\n---\n\n');
-
-    const userPrompt = `Original query: "${query.text}"
-
-Research findings from specialized agents:
-
-${agentSummary}
-
-Please synthesize these findings into a comprehensive response that directly addresses the original query.`;
-
-    try {
-      const response = await this.anthropic.messages.create({
-        model: getDefaultModel('anthropic'),
-        max_tokens: 4000,
-        temperature: 0.2,
-        system: systemPrompt,
-        messages: [{
-          role: 'user',
-          content: userPrompt
-        }]
-      });
-
-      const content = response.content[0];
-      if (content.type === 'text') {
-        return content.text;
-      }
-
-      throw new Error('Unexpected response format during synthesis');
-
-    } catch (error) {
-      console.error('Synthesis failed, returning raw findings:', error);
-
-      // Fallback: return concatenated findings
-      return `Research findings for "${query.text}":\n\n${agentSummary}`;
-    }
-  }
 
   private calculateOverallConfidence(results: AgentResult[]): number {
     if (results.length === 0) return 0;
@@ -298,6 +376,127 @@ Please synthesize these findings into a comprehensive response that directly add
       return result.findings.join('\n\n');
     } catch (error) {
       throw new Error(`Quick insight failed: ${error}`);
+    }
+  }
+
+  // Debug helper methods
+  private getAgentNamesForType(queryType: string): string[] {
+    const baseAgents = ['BookSearchAgent'];
+
+    switch (queryType) {
+      case 'FACTUAL':
+        return [...baseAgents, 'EvidenceAgent', 'ContextAgent'];
+      case 'ANALYTICAL':
+        return [...baseAgents, 'AnalysisAgent', 'ContextAgent', 'EvidenceAgent'];
+      case 'COMPARATIVE':
+        return [...baseAgents, 'AnalysisAgent', 'ContextAgent'];
+      case 'EVALUATIVE':
+        return [...baseAgents, 'EvidenceAgent', 'AnalysisAgent', 'ContextAgent'];
+      default:
+        return [...baseAgents, 'EvidenceAgent', 'AnalysisAgent', 'ContextAgent'];
+    }
+  }
+
+  private calculateTotalTokens(agents: AgentDebugInfo[]): number {
+    return agents.reduce((total, agent) => {
+      return total + (agent.metadata?.tokenUsage?.total || 0);
+    }, 0);
+  }
+
+  private getTokensByAgent(agents: AgentDebugInfo[]): Record<string, number> {
+    const tokensByAgent: Record<string, number> = {};
+
+    agents.forEach(agent => {
+      tokensByAgent[agent.name] = agent.metadata?.tokenUsage?.total || 0;
+    });
+
+    return tokensByAgent;
+  }
+
+  private async synthesizeFindings(
+    query: ResearchQuery,
+    agentResults: AgentResult[],
+    context: BookContext,
+    sessionId?: string
+  ): Promise<string> {
+    const systemPrompt = `You are a research synthesis expert. Your task is to combine findings from multiple research agents into a comprehensive, coherent response.
+
+Given:
+- Original query: "${query.text}"
+- Query type: ${query.type}
+- Multiple agent findings
+
+Your task:
+1. Synthesize all findings into a coherent, well-structured response
+2. Highlight key insights and evidence
+3. Note any conflicting information or gaps
+4. Provide a comprehensive answer that addresses the original query
+
+Be thorough but concise. Structure your response clearly with proper formatting.`;
+
+    const findingsText = agentResults
+      .map(result => `**${result.agentName} Findings:**\n${result.findings.join('\n')}\n`)
+      .join('\n');
+
+    const userPrompt = `Please synthesize these research findings into a comprehensive response:\n\n${findingsText}`;
+
+    if (sessionId && this.currentSession) {
+      const synthesisStart = Date.now();
+
+      this.currentSession.synthesis = {
+        startTime: synthesisStart,
+        systemPrompt,
+        agentInputs: findingsText
+      };
+
+      debugEmitter.emit({
+        type: 'synthesis_started',
+        timestamp: synthesisStart,
+        sessionId,
+        data: {
+          systemPrompt,
+          agentInputs: findingsText
+        }
+      });
+    }
+
+    try {
+      const response = await this.anthropic.messages.create({
+        model: getDefaultModel('anthropic'),
+        max_tokens: 4000,
+        temperature: 0.2,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: userPrompt
+        }]
+      });
+
+      const synthesisEnd = Date.now();
+      const synthesis = response.content[0].type === 'text' ? response.content[0].text : '';
+
+      if (sessionId && this.currentSession && this.currentSession.synthesis) {
+        this.currentSession.synthesis.endTime = synthesisEnd;
+        this.currentSession.synthesis.duration = synthesisEnd - this.currentSession.synthesis.startTime;
+        this.currentSession.synthesis.rawOutput = synthesis;
+        this.currentSession.synthesis.finalOutput = synthesis;
+
+        debugEmitter.emit({
+          type: 'synthesis_completed',
+          timestamp: synthesisEnd,
+          sessionId,
+          data: {
+            duration: this.currentSession.synthesis.duration,
+            synthesis
+          }
+        });
+      }
+
+      return synthesis;
+
+    } catch (error) {
+      console.error('Synthesis failed:', error);
+      return `I was able to gather research findings, but encountered an error during synthesis: ${error instanceof Error ? error.message : 'Unknown error'}`;
     }
   }
 }

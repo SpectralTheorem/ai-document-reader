@@ -1,13 +1,29 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { BaseAgent } from './BaseAgent';
 import { ResearchQuery, BookContext, AgentResult, EvidenceResult } from './types';
+import { debugEmitter } from './debug-types';
 
 export class EvidenceAgent extends BaseAgent {
   name = 'EvidenceAgent';
   description = 'Specialized agent for claim verification, fact-checking, and gathering supporting evidence';
 
-  async execute(query: ResearchQuery, context: BookContext): Promise<AgentResult> {
+  async execute(query: ResearchQuery, context: BookContext, sessionId?: string): Promise<AgentResult> {
     const startTime = Date.now();
+    const agentId = `${this.name}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+
+    // Emit debug event for agent start
+    if (sessionId) {
+      debugEmitter.emit({
+        type: 'agent_started',
+        timestamp: startTime,
+        sessionId,
+        data: {
+          agentId,
+          agentName: this.name,
+          query: query.text
+        }
+      });
+    }
 
     const systemPrompt = `You are an expert research assistant specialized in evidence analysis and claim verification. Your tasks include:
 
@@ -53,7 +69,7 @@ ${bookContent}
 Focus on finding concrete evidence, data, examples, and expert opinions that either support or contradict any claims made in the query or implied by the question.`;
 
     try {
-      const response = await this.callClaude(systemPrompt, userPrompt, true);
+      const response = await this.callClaude(systemPrompt, userPrompt, true, sessionId, agentId);
 
       const findings = this.parseEvidenceFindings(response);
       const confidence = this.extractConfidence(response);
@@ -61,15 +77,50 @@ Focus on finding concrete evidence, data, examples, and expert opinions that eit
 
       const executionTime = Date.now() - startTime;
 
-      return this.createAgentResult(
+      const result = this.createAgentResult(
         query.id,
         findings,
         confidence,
         sources,
         executionTime
       );
+
+      // Emit debug event for agent completion
+      if (sessionId) {
+        debugEmitter.emit({
+          type: 'agent_completed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentId,
+            agentName: this.name,
+            duration: executionTime,
+            findings,
+            confidence,
+            sources,
+            rawOutput: response
+          }
+        });
+      }
+
+      return result;
     } catch (error) {
       console.error('EvidenceAgent execution failed:', error);
+
+      // Emit debug event for agent failure
+      if (sessionId) {
+        debugEmitter.emit({
+          type: 'agent_failed',
+          timestamp: Date.now(),
+          sessionId,
+          data: {
+            agentId,
+            agentName: this.name,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        });
+      }
+
       throw error;
     }
   }

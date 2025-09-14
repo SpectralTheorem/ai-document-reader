@@ -19,6 +19,11 @@ import {
   BookOpen,
   Zap
 } from 'lucide-react';
+import { libraryStorage } from '@/lib/library-storage';
+import { DebugSettings, DEFAULT_DEBUG_SETTINGS, loadDebugSettings, saveDebugSettings, exportDebugSettings, importDebugSettings } from '@/types/debug-settings';
+import { BookSelector } from '@/components/BookSelector';
+import { QueryTemplates } from '@/components/QueryTemplates';
+import { loadDebugPresets, saveDebugPresets, DebugPresets } from '@/types/debug-presets';
 
 interface AgentExecution {
   id: string;
@@ -68,56 +73,134 @@ export default function DebugPage() {
   const [query, setQuery] = useState('');
   const [bookId, setBookId] = useState('');
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [settings, setSettings] = useState<DebugSettings>(DEFAULT_DEBUG_SETTINGS);
+  const [showSettings, setShowSettings] = useState(false);
+  const [presets, setPresets] = useState<DebugPresets>({ favoriteQueries: [], queryHistory: [] });
   const wsRef = useRef<WebSocket | null>(null);
 
-  // WebSocket connection for real-time updates
+  // Load settings and presets on component mount
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:3005/api/debug/ws');
+    setSettings(loadDebugSettings());
+    const loadedPresets = loadDebugPresets();
+    setPresets(loadedPresets);
 
-    ws.onopen = () => {
+    // Restore last selections
+    if (loadedPresets.lastBookId) {
+      setBookId(loadedPresets.lastBookId);
+    }
+    if (loadedPresets.lastQuery) {
+      setQuery(loadedPresets.lastQuery);
+    }
+  }, []);
+
+  // Server-Sent Events connection for real-time updates
+  useEffect(() => {
+    const eventSource = new EventSource('/api/debug/ws');
+
+    eventSource.onopen = () => {
       setIsConnected(true);
-      console.log('Debug WebSocket connected');
+      console.log('Debug SSE connected');
     };
 
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      handleWebSocketMessage(data);
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleDebugMessage(data);
+      } catch (error) {
+        console.error('Failed to parse debug message:', error);
+      }
     };
 
-    ws.onclose = () => {
+    eventSource.onerror = () => {
       setIsConnected(false);
-      console.log('Debug WebSocket disconnected');
+      console.log('Debug SSE disconnected');
     };
 
-    wsRef.current = ws;
+    // Store reference for cleanup
+    wsRef.current = eventSource as any;
 
     return () => {
-      ws.close();
+      eventSource.close();
     };
   }, []);
 
-  const handleWebSocketMessage = (data: any) => {
+  const handleDebugMessage = (data: any) => {
+    console.log('📡 Debug event received:', data);
+
     // Handle real-time updates from the orchestrator
     switch (data.type) {
+      case 'connected':
+        console.log('✅ Debug stream connected');
+        break;
       case 'session_started':
-        setCurrentSession(data.session);
+        setCurrentSession(data.data.session);
+        setSessions(prev => [data.data.session, ...prev]);
+        break;
+      case 'query_analyzed':
+        if (currentSession?.id === data.sessionId) {
+          setCurrentSession(prev => prev ? {
+            ...prev,
+            queryAnalysis: data.data.analysis,
+            status: 'executing'
+          } : null);
+        }
         break;
       case 'agent_started':
-        updateAgentStatus(data.sessionId, data.agentId, 'running', { startTime: data.timestamp });
+        updateAgentStatus(data.sessionId, data.data.agentId, 'running', {
+          agentName: data.data.agentName,
+          startTime: data.timestamp
+        });
+        break;
+      case 'agent_progress':
+        // Handle agent progress updates
+        if (data.data.stage === 'api_call_complete') {
+          updateAgentStatus(data.sessionId, data.data.agentId, 'completed', {
+            endTime: data.timestamp,
+            duration: data.data.duration,
+            output: data.data.rawOutput,
+            confidence: 0.8, // Default confidence
+            metadata: {
+              tokenUsage: data.data.tokenUsage
+            }
+          });
+        }
         break;
       case 'agent_completed':
-        updateAgentStatus(data.sessionId, data.agentId, 'completed', {
+        updateAgentStatus(data.sessionId, data.data.agentId, 'completed', {
           endTime: data.timestamp,
-          output: data.output,
-          confidence: data.confidence,
-          sources: data.sources
+          output: data.data.output,
+          confidence: data.data.confidence,
+          sources: data.data.sources
+        });
+        break;
+      case 'agent_failed':
+        updateAgentStatus(data.sessionId, data.data.agentId, 'failed', {
+          error: data.data.error
         });
         break;
       case 'synthesis_started':
         updateSessionStatus(data.sessionId, 'synthesizing');
         break;
+      case 'synthesis_completed':
+        if (currentSession?.id === data.sessionId) {
+          setCurrentSession(prev => prev ? {
+            ...prev,
+            synthesis: {
+              ...prev.synthesis,
+              finalOutput: data.data.synthesis,
+              duration: data.data.duration
+            }
+          } : null);
+        }
+        break;
       case 'session_completed':
         updateSessionStatus(data.sessionId, 'completed');
+        if (currentSession?.id === data.sessionId && data.data.session) {
+          setCurrentSession(data.data.session);
+        }
+        break;
+      case 'session_failed':
+        updateSessionStatus(data.sessionId, 'failed');
         break;
     }
   };
@@ -126,14 +209,37 @@ export default function DebugPage() {
     if (currentSession?.id === sessionId) {
       setCurrentSession(prev => {
         if (!prev) return null;
-        return {
-          ...prev,
-          agents: prev.agents.map(agent =>
-            agent.id === agentId
-              ? { ...agent, status: status as any, ...updates }
-              : agent
-          )
-        };
+
+        // Check if agent exists
+        const existingAgent = prev.agents.find(agent => agent.id === agentId);
+
+        if (existingAgent) {
+          // Update existing agent
+          return {
+            ...prev,
+            agents: prev.agents.map(agent =>
+              agent.id === agentId
+                ? { ...agent, status: status as any, ...updates }
+                : agent
+            )
+          };
+        } else {
+          // Create new agent
+          const newAgent = {
+            id: agentId,
+            name: updates.agentName || agentId.split('_')[0], // Extract agent name from ID
+            status: status as any,
+            startTime: Date.now(),
+            endTime: undefined,
+            duration: 0,
+            ...updates
+          };
+
+          return {
+            ...prev,
+            agents: [...prev.agents, newAgent]
+          };
+        }
       });
     }
   };
@@ -148,21 +254,107 @@ export default function DebugPage() {
     if (!query || !bookId) return;
 
     try {
-      const response = await fetch('/api/debug/session', {
+      console.log('🚀 Starting debug session...', { query, bookId });
+
+      // Get the book document from client-side IndexedDB first
+      console.log('📚 Fetching document from IndexedDB...');
+      let document = null;
+
+      try {
+        document = await libraryStorage.getDocument(bookId);
+        console.log('📋 Document fetch result:', {
+          hasDocument: !!document,
+          title: document?.title,
+          sectionsCount: document?.sections?.length
+        });
+      } catch (error) {
+        console.error('❌ Failed to fetch document from IndexedDB:', error);
+      }
+
+      if (!document) {
+        throw new Error('Book not found in library. Please make sure the book is loaded in the main application first.');
+      }
+
+      console.log('📚 Starting debug session using book-research API with client-side document...');
+
+      // Generate a unique debug session ID
+      const timestamp = Date.now();
+      const randomPart = Math.random().toString(36).substr(2, 9);
+      const extraRandom = Math.random().toString(36).substr(2, 5);
+      const sessionId = `debug_${timestamp}_${randomPart}_${extraRandom}`;
+      console.log('🆔 Generated session ID:', sessionId);
+
+      const response = await fetch('/api/debug/book-research', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query,
           bookId,
-          enableDebugging: true
+          document,
+          mode: settings.researchMode,
+          enableDebugging: true,
+          sessionId,
+          settings
         })
       });
 
-      const session = await response.json();
-      setCurrentSession(session);
-      setSessions(prev => [session, ...prev]);
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to start debug session');
+      }
+
+      console.log('✅ Debug session completed:', result);
+
+      // Save to query history
+      const updatedPresets = {
+        ...presets,
+        lastBookId: bookId,
+        lastQuery: query,
+        queryHistory: [
+          { bookId, query, timestamp: Date.now() },
+          ...presets.queryHistory.filter(h => !(h.bookId === bookId && h.query === query))
+        ].slice(0, 10) // Keep last 10
+      };
+      setPresets(updatedPresets);
+      saveDebugPresets(updatedPresets);
+
+      // Create a session based on the book-research results
+      const debugSession: DebugSession = {
+        id: sessionId,
+        query,
+        bookId,
+        timestamp: Date.now(),
+        agents: result.agentResults?.map((agentResult: any, index: number) => ({
+          id: `${agentResult.agentName}_${sessionId}_${index}`,
+          name: agentResult.agentName,
+          status: 'completed' as const,
+          startTime: Date.now() - (result.totalExecutionTime || 0),
+          endTime: Date.now(),
+          duration: agentResult.executionTime || result.totalExecutionTime || 0,
+          output: agentResult.findings?.join('\n\n'),
+          confidence: agentResult.confidence,
+          sources: agentResult.sources
+        })) || [],
+        synthesis: result.synthesis,
+        totalDuration: result.totalExecutionTime || 0,
+        status: 'completed'
+      };
+
+      setCurrentSession(debugSession);
+      setSessions(prev => {
+        // Ensure we don't add duplicate sessions
+        const exists = prev.find(s => s.id === debugSession.id);
+        if (exists) {
+          // Update existing session instead of adding duplicate
+          return prev.map(s => s.id === debugSession.id ? debugSession : s);
+        }
+        return [debugSession, ...prev];
+      });
+
     } catch (error) {
-      console.error('Failed to start debug session:', error);
+      console.error('❌ Failed to start debug session:', error);
+      alert(`Failed to start debug session: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -179,6 +371,48 @@ export default function DebugPage() {
       case 'failed': return 'text-red-500';
       default: return 'text-gray-400';
     }
+  };
+
+  // Settings handlers
+  const handleSettingsChange = (newSettings: DebugSettings) => {
+    setSettings(newSettings);
+    saveDebugSettings(newSettings);
+  };
+
+  const exportSettings = () => {
+    const data = exportDebugSettings(settings);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'debug-settings.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const importSettings = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const content = e.target?.result as string;
+            const newSettings = importDebugSettings(content);
+            handleSettingsChange(newSettings);
+          } catch (error) {
+            alert('Failed to import settings: ' + (error as Error).message);
+          }
+        };
+        reader.readAsText(file);
+      }
+    };
+    input.click();
   };
 
   return (
@@ -208,7 +442,11 @@ export default function DebugPage() {
               <Upload className="h-4 w-4 mr-2" />
               Import Session
             </Button>
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowSettings(!showSettings)}
+            >
               <Settings className="h-4 w-4" />
             </Button>
           </div>
@@ -219,43 +457,162 @@ export default function DebugPage() {
         {/* Left Panel - Query & Control */}
         <div className="w-80 bg-white border-r p-4 overflow-y-auto">
           <div className="space-y-4">
-            {/* Query Input */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Research Query</label>
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Enter your research question..."
-                className="w-full h-24 px-3 py-2 border rounded-md resize-none"
-              />
-            </div>
+            {/* Book Selection */}
+            <BookSelector
+              selectedBookId={bookId}
+              onBookSelect={setBookId}
+              disabled={false}
+            />
 
-            {/* Book ID Input */}
-            <div>
-              <label className="block text-sm font-medium mb-2">Book ID</label>
-              <input
-                type="text"
-                value={bookId}
-                onChange={(e) => setBookId(e.target.value)}
-                placeholder="Enter book ID..."
-                className="w-full px-3 py-2 border rounded-md"
-              />
-            </div>
+            {/* Query Templates & Input */}
+            <QueryTemplates
+              selectedQuery={query}
+              onQuerySelect={setQuery}
+              disabled={false}
+            />
 
             {/* Controls */}
-            <div className="flex space-x-2">
-              <Button
-                onClick={startDebugSession}
-                disabled={!query || !bookId}
-                className="flex-1"
-              >
-                <Play className="h-4 w-4 mr-2" />
-                Start Debug
-              </Button>
-              <Button variant="outline">
-                <Square className="h-4 w-4" />
-              </Button>
+            <div className="space-y-2">
+              <div className="flex space-x-2">
+                <Button
+                  onClick={startDebugSession}
+                  disabled={!query || !bookId}
+                  className="flex-1"
+                >
+                  <Play className="h-4 w-4 mr-2" />
+                  Start Debug
+                </Button>
+                <Button variant="outline">
+                  <Square className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Quick Actions */}
+              {presets.lastBookId && presets.lastQuery && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setBookId(presets.lastBookId!);
+                    setQuery(presets.lastQuery!);
+                  }}
+                  className="w-full text-sm"
+                  disabled={bookId === presets.lastBookId && query === presets.lastQuery}
+                >
+                  <RotateCcw className="h-3 w-3 mr-2" />
+                  Restore Last Session
+                </Button>
+              )}
             </div>
+
+            {/* Settings Panel */}
+            {showSettings && (
+              <div className="border rounded-lg p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium">Debug Settings</h3>
+                  <div className="flex space-x-2">
+                    <Button variant="outline" size="sm" onClick={exportSettings}>
+                      <Download className="h-3 w-3 mr-1" />
+                      Export
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={importSettings}>
+                      <Upload className="h-3 w-3 mr-1" />
+                      Import
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Token Limit */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Token Limit per Agent: {(settings.tokenLimitPerAgent / 1000).toFixed(0)}k
+                  </label>
+                  <input
+                    type="range"
+                    min="25000"
+                    max="150000"
+                    step="5000"
+                    value={settings.tokenLimitPerAgent}
+                    onChange={(e) => handleSettingsChange({
+                      ...settings,
+                      tokenLimitPerAgent: parseInt(e.target.value)
+                    })}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-gray-500">
+                    <span>25k</span>
+                    <span>150k</span>
+                  </div>
+                </div>
+
+                {/* Max Sections */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">Max Sections</label>
+                  <input
+                    type="number"
+                    min="5"
+                    max="50"
+                    value={settings.maxSections}
+                    onChange={(e) => handleSettingsChange({
+                      ...settings,
+                      maxSections: parseInt(e.target.value) || 20
+                    })}
+                    className="w-full px-3 py-2 border rounded-md"
+                  />
+                </div>
+
+                {/* Enabled Agents */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">Enabled Agents</label>
+                  <div className="space-y-2">
+                    {Object.entries(settings.enabledAgents).map(([key, enabled]) => (
+                      <label key={key} className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={enabled}
+                          onChange={(e) => handleSettingsChange({
+                            ...settings,
+                            enabledAgents: {
+                              ...settings.enabledAgents,
+                              [key]: e.target.checked
+                            }
+                          })}
+                        />
+                        <span className="text-sm capitalize">
+                          {key.replace(/([A-Z])/g, ' $1').trim()}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Research Mode */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">Research Mode</label>
+                  <select
+                    value={settings.researchMode}
+                    onChange={(e) => handleSettingsChange({
+                      ...settings,
+                      researchMode: e.target.value as 'quick' | 'full'
+                    })}
+                    className="w-full px-3 py-2 border rounded-md"
+                  >
+                    <option value="quick">Quick</option>
+                    <option value="full">Full</option>
+                  </select>
+                </div>
+
+                {/* Reset Button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleSettingsChange(DEFAULT_DEBUG_SETTINGS)}
+                  className="w-full"
+                >
+                  <RotateCcw className="h-3 w-3 mr-2" />
+                  Reset to Defaults
+                </Button>
+              </div>
+            )}
 
             {/* Session History */}
             <div>

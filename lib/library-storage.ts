@@ -10,6 +10,12 @@ class LibraryStorage {
   private db: IDBDatabase | null = null;
 
   async init(): Promise<void> {
+    // Check if we're in a browser environment
+    if (typeof window === 'undefined' || typeof indexedDB === 'undefined') {
+      console.warn('IndexedDB not available in this environment');
+      return Promise.resolve();
+    }
+
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
@@ -40,6 +46,11 @@ class LibraryStorage {
   async addBook(book: LibraryBook, document: ParsedDocument): Promise<void> {
     if (!this.db) await this.init();
 
+    // Do nothing if no database connection
+    if (!this.db) {
+      return;
+    }
+
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([BOOKS_STORE, DOCUMENTS_STORE], 'readwrite');
       
@@ -60,6 +71,11 @@ class LibraryStorage {
   async getBooks(): Promise<LibraryBook[]> {
     if (!this.db) await this.init();
 
+    // Return empty array if no database connection
+    if (!this.db) {
+      return [];
+    }
+
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([BOOKS_STORE], 'readonly');
       const request = transaction.objectStore(BOOKS_STORE).getAll();
@@ -76,8 +92,20 @@ class LibraryStorage {
     });
   }
 
+  async getAllBooks(): Promise<LibraryBook[]> {
+    // This is for server-side use where IndexedDB isn't available
+    // We'll return empty array for now - this method should be overridden
+    // or books should be fetched from a different source on the server
+    return [];
+  }
+
   async getDocument(bookId: string): Promise<ParsedDocument | null> {
     if (!this.db) await this.init();
+
+    // Return null if no database connection
+    if (!this.db) {
+      return null;
+    }
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([DOCUMENTS_STORE], 'readonly');
@@ -92,6 +120,11 @@ class LibraryStorage {
 
   async updateBookProgress(bookId: string, sectionId: string, percentage: number): Promise<void> {
     if (!this.db) await this.init();
+
+    // Do nothing if no database connection
+    if (!this.db) {
+      return;
+    }
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([BOOKS_STORE], 'readwrite');
@@ -114,6 +147,11 @@ class LibraryStorage {
 
   async deleteBook(bookId: string): Promise<void> {
     if (!this.db) await this.init();
+
+    // Do nothing if no database connection
+    if (!this.db) {
+      return;
+    }
 
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([BOOKS_STORE, DOCUMENTS_STORE], 'readwrite');
