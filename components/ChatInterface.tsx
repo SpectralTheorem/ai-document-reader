@@ -11,6 +11,7 @@ import { conversationStorage } from '@/lib/conversation-storage';
 import { ConversationThread, ConversationSummary } from '@/types/conversations';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { bookContextManager } from '@/lib/book-context-manager';
 
 interface ChatInterfaceProps {
   section: Section | null;
@@ -25,6 +26,14 @@ const AI_ACTIONS = [
   { id: 'explain', name: 'Explain Simply', icon: Lightbulb },
   { id: 'questions', name: 'Generate Questions', icon: HelpCircle },
   { id: 'key-concepts', name: 'Key Concepts', icon: Sparkles },
+];
+
+const BOOK_CONTEXT_ACTIONS = [
+  { id: 'book-search', name: 'Search Book', icon: FileSearch },
+  { id: 'find-references', name: 'Find Cross-References', icon: Sparkles },
+  { id: 'get-key-terms', name: 'Key Terms', icon: List },
+  { id: 'book-structure', name: 'Book Structure', icon: Archive },
+  { id: 'supporting-evidence', name: 'Find Evidence', icon: Lightbulb },
 ];
 
 interface ThinkingSectionProps {
@@ -71,8 +80,9 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
   const [currentThread, setCurrentThread] = useState<ConversationThread | null>(null);
   const [threadSummaries, setThreadSummaries] = useState<ConversationSummary[]>([]);
   const [showThreadSelector, setShowThreadSelector] = useState(false);
-  const [isCreatingThread, setIsCreatingThread] = useState(false);
-  const [newThreadTitle, setNewThreadTitle] = useState('');
+
+  // Book context state
+  const [bookContextEnabled, setBookContextEnabled] = useState(false);
 
   useEffect(() => {
     if (settings.interface.autoScroll) {
@@ -87,6 +97,23 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
       loadOrCreateDefaultThread();
     }
   }, [section?.id, bookId]);
+
+  // Initialize book context when book changes
+  useEffect(() => {
+    if (bookId) {
+      initializeBookContext();
+    }
+  }, [bookId]);
+
+  const initializeBookContext = async () => {
+    try {
+      await bookContextManager.setCurrentBook(bookId);
+      setBookContextEnabled(true);
+    } catch (error) {
+      console.error('Failed to initialize book context:', error);
+      setBookContextEnabled(false);
+    }
+  };
 
   // Thread management functions
   const loadThreadSummaries = async () => {
@@ -141,13 +168,14 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
     if (!section) return;
 
     try {
-      const title = newThreadTitle.trim() || `New Discussion: ${section.title}`;
+      // Auto-generate title with timestamp for uniqueness
+      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const title = `Discussion ${timestamp}`;
       const thread = await conversationStorage.createThread(bookId, section.id, title);
 
       setCurrentThread(thread);
       onMessagesChange([]);
-      setNewThreadTitle('');
-      setIsCreatingThread(false);
+      setShowThreadSelector(false); // Close the dropdown
       loadThreadSummaries();
     } catch (error) {
       console.error('Failed to create thread:', error);
@@ -181,8 +209,90 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
     }
   };
 
+  const handleBookContextAction = async (actionId: string, userInput?: string): Promise<string> => {
+    if (!bookContextEnabled) {
+      throw new Error('Book context not available');
+    }
+
+    switch (actionId) {
+      case 'book-search':
+        const query = userInput || prompt('What would you like to search for in the book?');
+        if (!query) throw new Error('Search query required');
+        return await bookContextManager.searchBookContent(query, 10);
+
+      case 'find-references':
+        const topic = userInput || prompt('What topic would you like to find references for?');
+        if (!topic) throw new Error('Topic required');
+        return await bookContextManager.findCrossReferences(topic, section?.id);
+
+      case 'get-key-terms':
+        return await bookContextManager.getKeyTerms(section?.id, 15);
+
+      case 'book-structure':
+        return await bookContextManager.getBookStructure(true);
+
+      case 'supporting-evidence':
+        const claim = userInput || prompt('What claim would you like to find supporting evidence for?');
+        if (!claim) throw new Error('Claim required');
+        return await bookContextManager.findSupportingEvidence(claim, 'all');
+
+      default:
+        throw new Error(`Unknown book context action: ${actionId}`);
+    }
+  };
+
   const sendMessage = async (content: string, action?: string) => {
     if (!section || (!content.trim() && !action) || !currentThread) return;
+
+    // Handle book context actions directly
+    if (action && BOOK_CONTEXT_ACTIONS.find(a => a.id === action)) {
+      setIsLoading(true);
+      try {
+        const result = await handleBookContextAction(action);
+
+        const userMessage: ChatMessage = {
+          id: generateId(),
+          role: 'user',
+          content: `[Book Context Action: ${BOOK_CONTEXT_ACTIONS.find(a => a.id === action)?.name}]`,
+          timestamp: new Date(),
+          sectionId: section.id,
+        };
+
+        const assistantMessage: ChatMessage = {
+          id: generateId(),
+          role: 'assistant',
+          content: result,
+          timestamp: new Date(),
+          sectionId: section.id,
+        };
+
+        const updatedMessages = [...messages, userMessage, assistantMessage];
+        onMessagesChange(updatedMessages);
+
+        // Save messages to thread
+        try {
+          await conversationStorage.addMessage(currentThread.id, userMessage);
+          await conversationStorage.addMessage(currentThread.id, assistantMessage);
+        } catch (error) {
+          console.error('Failed to save book context action messages:', error);
+        }
+      } catch (error) {
+        const errorMessage: ChatMessage = {
+          id: generateId(),
+          role: 'assistant',
+          content: `Error executing book context action: ${error instanceof Error ? error.message : String(error)}`,
+          timestamp: new Date(),
+          sectionId: section.id,
+          isError: true,
+        };
+
+        const updatedMessages = [...messages, errorMessage];
+        onMessagesChange(updatedMessages);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
 
     const userMessage: ChatMessage = {
       id: generateId(),
@@ -218,9 +328,35 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
     onMessagesChange(messagesWithAssistant);
 
     try {
+      // Enhanced context using book-wide understanding if available
+      let contextContent = `You are helping analyze the following chapter from a book. Chapter title: "${section.title}". Chapter content: ${section.content?.substring(0, 3000)}...`;
+
+      if (bookContextEnabled) {
+        try {
+          // Get enhanced context from book context manager
+          const chapterContext = await bookContextManager.getChapterContext(section.id, true);
+          const bookStructure = await bookContextManager.getBookStructure(false);
+
+          contextContent = `You are helping analyze content from a book with full book context awareness.
+
+Current Chapter: "${section.title}"
+Chapter Content: ${section.content?.substring(0, 2000)}...
+
+Related Context:
+${chapterContext}
+
+Book Structure:
+${bookStructure}
+
+You have access to the full book content and can reference other chapters, find cross-references, and provide comprehensive analysis based on the entire book rather than just the current chapter.`;
+        } catch (error) {
+          console.warn('Failed to get enhanced book context, falling back to basic context:', error);
+        }
+      }
+
       const contextMessage = {
         role: 'system',
-        content: `You are helping analyze the following chapter from a book. Chapter title: "${section.title}". Chapter content: ${section.content?.substring(0, 3000)}...`
+        content: contextContent
       };
 
       const processedMessages = [
@@ -540,7 +676,8 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => setIsCreatingThread(true)}
+                        onClick={createNewThread}
+                        title="New Thread"
                       >
                         <Plus className="h-4 w-4" />
                       </Button>
@@ -592,42 +729,6 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
                     )}
                   </div>
 
-                  {isCreatingThread && (
-                    <div className="p-3 border-t bg-gray-50">
-                      <input
-                        type="text"
-                        placeholder="Thread title..."
-                        value={newThreadTitle}
-                        onChange={(e) => setNewThreadTitle(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border rounded mb-2"
-                        onKeyPress={(e) => {
-                          if (e.key === 'Enter') {
-                            createNewThread();
-                          }
-                        }}
-                        autoFocus
-                      />
-                      <div className="flex space-x-2">
-                        <Button
-                          size="sm"
-                          onClick={createNewThread}
-                          disabled={!newThreadTitle.trim()}
-                        >
-                          Create
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setIsCreatingThread(false);
-                            setNewThreadTitle('');
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -635,7 +736,7 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setIsCreatingThread(true)}
+              onClick={createNewThread}
               title="New Thread"
             >
               <Plus className="h-4 w-4" />
@@ -649,26 +750,93 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
           )}
         </div>
 
-        <div className="flex space-x-2">
-          {AI_ACTIONS.map((action) => {
-            const Icon = action.icon;
-            return (
-              <Button
-                key={action.id}
-                variant="outline"
-                size="sm"
-                onClick={() => sendMessage('', action.id)}
-                disabled={isLoading}
-              >
-                <Icon className="h-4 w-4 mr-1" />
-                {action.name}
-              </Button>
-            );
-          })}
-        </div>
+{/* Header action buttons removed - too cluttered */}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Show centered action buttons when chat is empty */}
+        {messages.filter(m => m.sectionId === section.id).length === 0 && !isLoading && (
+          <div className="h-full flex flex-col items-center justify-center">
+            <div className="max-w-2xl w-full text-center">
+              <div className="mb-8">
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  How can I help you explore "{section.title}"?
+                </h3>
+                <p className="text-gray-600 text-sm">
+                  Choose a quick action below or ask your own question about this chapter.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+                {AI_ACTIONS.map((action) => {
+                  const Icon = action.icon;
+                  return (
+                    <Button
+                      key={action.id}
+                      variant="outline"
+                      size="lg"
+                      onClick={() => sendMessage('', action.id)}
+                      disabled={isLoading}
+                      className="flex items-center justify-center space-x-3 py-4 px-6 h-auto text-left hover:bg-gray-50 border-gray-200"
+                    >
+                      <Icon className="h-5 w-5 text-gray-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">{action.name}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {action.id === 'extract-facts' && 'Pull out key facts and information'}
+                          {action.id === 'summarize' && 'Get a concise overview of the content'}
+                          {action.id === 'explain' && 'Break down complex concepts simply'}
+                          {action.id === 'questions' && 'Create discussion questions'}
+                          {action.id === 'key-concepts' && 'Identify main themes and ideas'}
+                        </div>
+                      </div>
+                    </Button>
+                  );
+                })}
+              </div>
+
+              {/* Book Context Actions - shown only when book context is enabled */}
+              {bookContextEnabled && (
+                <>
+                  <div className="flex items-center space-x-2 mb-4">
+                    <div className="flex-1 h-px bg-gray-200"></div>
+                    <span className="px-3 text-sm font-medium text-gray-500">Full Book Context Tools</span>
+                    <div className="flex-1 h-px bg-gray-200"></div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+                    {BOOK_CONTEXT_ACTIONS.map((action) => {
+                      const Icon = action.icon;
+                      return (
+                        <Button
+                          key={action.id}
+                          variant="outline"
+                          size="lg"
+                          onClick={() => sendMessage('', action.id)}
+                          disabled={isLoading}
+                          className="flex items-center justify-center space-x-3 py-4 px-6 h-auto text-left hover:bg-green-50 border-green-200"
+                        >
+                          <Icon className="h-5 w-5 text-green-600 flex-shrink-0" />
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900">{action.name}</div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              {action.id === 'book-search' && 'Search across the entire book'}
+                              {action.id === 'find-references' && 'Find related sections and cross-references'}
+                              {action.id === 'get-key-terms' && 'Extract important terms and concepts'}
+                              {action.id === 'book-structure' && 'View complete book organization'}
+                              {action.id === 'supporting-evidence' && 'Find evidence for claims and arguments'}
+                            </div>
+                          </div>
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {messages
           .filter(m => m.sectionId === section.id)
           .map((message) => (

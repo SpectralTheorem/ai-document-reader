@@ -1,6 +1,6 @@
 # AI Document Reader
 
-A sophisticated AI-powered document reader with advanced EPUB support and intelligent text interaction capabilities. Upload your books and engage with them through AI-powered conversations and analysis.
+A sophisticated AI-powered document reader with full-book context awareness and intelligent research capabilities. Upload your books and engage with them through comprehensive AI analysis that understands the entire book, not just individual chapters.
 
 ## ✨ Features
 
@@ -11,22 +11,33 @@ A sophisticated AI-powered document reader with advanced EPUB support and intell
 - **Smart Chapter Detection**: Extracts titles from NCX files or HTML headings
 - **HTML Rendering**: Direct rendering of EPUB HTML for authentic book experience
 
-### 🤖 AI-Powered Interactions
-- **Context-Aware Chat**: Intelligent conversations about specific chapters
+### 🧠 Full-Book AI Intelligence
+- **Book-Wide Context Awareness**: AI understands entire book structure and cross-references
+- **Persistent Conversation Threads**: Multi-thread discussions per chapter with automatic titles
 - **Multiple AI Providers**: Support for local (Ollama) and cloud-based AI (OpenAI, Anthropic)
-- **Pre-built AI Actions**:
+- **Chapter-Level AI Actions**:
   - 📊 Extract empirical facts and statistics
   - 📝 Summarize content and key points
   - 💡 Explain complex concepts in simple terms
   - ❓ Generate thoughtful discussion questions
   - 🔍 Identify and define key concepts
-- **Streaming Responses**: Real-time AI responses for better UX
+- **Full-Book Context Tools**:
+  - 🔍 **Search Book**: Semantic search across entire book content
+  - 🔗 **Find Cross-References**: Locate related sections and supporting evidence
+  - 📋 **Key Terms**: Extract important concepts from chapters or entire book
+  - 📖 **Book Structure**: View hierarchical organization and navigation
+  - 🎯 **Supporting Evidence**: Find examples, statistics, quotes, and case studies
+- **Enhanced Context Assembly**: AI receives related chapters and book structure, not just current chapter
+- **Streaming Responses**: Real-time AI responses with thinking token support
 
 ### 🎨 User Experience
+- **Intelligent Library Management**: Upload books that persist with reading progress
 - **Split-pane Interface**: Elegant layout with chapters on left, content/chat on right
+- **Thread-Based Conversations**: Multiple conversation threads per chapter with persistent history
+- **Centered Action Interface**: Claude-style action buttons for empty chats
 - **Progress Visualization**: Detailed upload progress with step-by-step feedback
 - **Responsive Design**: Clean, modern UI that works across devices
-- **Reading Modes**: Toggle between reading and AI chat interfaces
+- **Instant Thread Creation**: One-click new conversation threads with auto-generated timestamps
 
 ## Getting Started
 
@@ -78,11 +89,17 @@ ollama pull mistral
 
 ## Usage
 
-1. **Upload Document**: Drag and drop or browse for EPUB files
-2. **Navigate Chapters**: Click chapters in the left sidebar
-3. **Read or Chat**: Toggle between reading and AI chat modes
-4. **AI Actions**: Use preset actions or ask custom questions
-5. **Switch Providers**: Choose between local Ollama or cloud APIs
+1. **Upload Document**: Drag and drop or browse for EPUB files (auto-saved to library)
+2. **Navigate Chapters**: Click chapters in the left sidebar to read or start conversations
+3. **Chat with Full Context**: Use chapter-level or full-book context tools
+4. **Multiple Conversations**: Create multiple conversation threads per chapter
+5. **Book-Wide Research**: Use full-book context tools for comprehensive analysis:
+   - Search across entire book content
+   - Find cross-references and connections
+   - Extract key terms and concepts
+   - Analyze book structure and organization
+   - Locate supporting evidence for claims
+6. **Switch Providers**: Choose between local Ollama or cloud APIs
 
 ## 🏗️ Architecture
 
@@ -90,28 +107,39 @@ ollama pull mistral
 - **Framework**: Next.js 15 with App Router
 - **Language**: TypeScript for type safety
 - **Styling**: Tailwind CSS with custom typography
-- **Document Processing**: 
+- **Document Processing**:
   - JSZip for EPUB archive extraction
   - Cheerio for HTML parsing and content extraction
   - xml2js for XML metadata processing
-- **AI Integration**: Axios-based providers for Ollama, OpenAI, and Anthropic
+- **Storage**:
+  - IndexedDB for client-side book storage and conversation persistence
+  - Browser-based book content management for privacy
+- **AI Integration**:
+  - Axios-based providers for Ollama, OpenAI, and Anthropic
+  - Full-book context management with semantic search
+  - Claude Code-inspired architecture for comprehensive understanding
 - **UI Components**: Radix UI primitives with Lucide React icons
 
 ### Key Components
 - **EPUBParser**: Advanced parser that extracts both HTML and text content
 - **DocumentFactory**: Abstracted interface for multiple document types
-- **ReaderLayout**: Responsive split-pane interface
-- **ChatInterface**: Context-aware AI conversation system
-- **AIProvider**: Unified interface for multiple AI services
+- **BookContextManager**: Full-book context awareness and semantic search
+- **ConversationStorage**: Persistent multi-thread conversation management
+- **LibraryStorage**: IndexedDB-based book library with progress tracking
+- **ReaderLayout**: Responsive split-pane interface with library integration
+- **ChatInterface**: Context-aware AI conversation system with full-book tools
+- **AIProvider**: Unified interface for multiple AI services with enhanced context
 
 ## Future Enhancements
 
 - [ ] PDF support with smart chapter detection
-- [ ] Persistent chat history
-- [ ] Export AI-generated content
-- [ ] Bookmarks and annotations
-- [ ] Multi-document support
-- [ ] Advanced search functionality
+- [ ] Vector embeddings for enhanced semantic search
+- [ ] BOOK.md generation for automatic book summaries
+- [ ] Export AI-generated content and conversations
+- [ ] Bookmarks and annotations with context linking
+- [ ] Multi-document cross-referencing and comparison
+- [ ] Advanced semantic search with relevance ranking
+- [ ] Integration with external research databases
 
 ## Troubleshooting
 
@@ -124,6 +152,12 @@ ollama pull mistral
 - Ensure the EPUB file is not corrupted
 - Try a different EPUB file to isolate the issue
 - Check console for specific error messages
+
+### Book Context Not Available
+- Ensure the book has been successfully uploaded and processed
+- Check browser console for IndexedDB access issues
+- Try refreshing the page to reinitialize book context
+- Verify the book contains readable text content
 
 ## 📸 Screenshots
 
@@ -148,6 +182,14 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 5. Open a Pull Request
 
 ## 📝 Changelog
+
+### v2.0.0 (2024-12-15)
+- 🧠 **Full-Book Context Awareness**: AI now understands entire book structure and relationships
+- 🔍 **Advanced Book Analysis Tools**: Search, cross-references, key terms, and evidence finding
+- 💬 **Multi-Thread Conversations**: Persistent conversation threads per chapter
+- 📚 **Intelligent Library Management**: Automatic book storage with reading progress
+- 🎯 **Enhanced Context Assembly**: AI receives related chapters and book structure
+- 🖼️ **Improved UX**: Centered action buttons, instant thread creation, better navigation
 
 ### v1.0.0 (2024-08-13)
 - ✨ Initial release with EPUB support
