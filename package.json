@@ -13,6 +13,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.62.0",
     "@modelcontextprotocol/sdk": "^1.18.0",
     "@radix-ui/react-icons": "^1.3.2",
     "@radix-ui/react-scroll-area": "^1.2.9",
@@ -20,6 +21,7 @@
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tabs": "^1.1.12",
     "@types/cheerio": "^0.22.35",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.2.1",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
@@ -32,6 +34,7 @@
     "epub-parser": "^0.2.5",
     "epubjs": "^0.3.93",
     "formidable": "^3.5.4",
+    "js-yaml": "^4.1.0",
     "jszip": "^3.10.1",
     "lucide-react": "^0.539.0",
     "next": "^15.4.6",

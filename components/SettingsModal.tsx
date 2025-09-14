@@ -45,6 +45,41 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [conversationStats, setConversationStats] = useState<ConversationStats | null>(null);
   const [conversationImportData, setConversationImportData] = useState('');
   const [showConversationImportModal, setShowConversationImportModal] = useState(false);
+  const [availableModels, setAvailableModels] = useState<{
+    ollama: string[];
+    openai: string[];
+    anthropic: string[];
+  }>({ ollama: [], openai: [], anthropic: [] });
+
+  // Load available models from config API
+  useEffect(() => {
+    const loadAvailableModels = async () => {
+      try {
+        const response = await fetch('/api/config');
+        if (!response.ok) {
+          throw new Error('Failed to fetch config');
+        }
+
+        const config = await response.json();
+
+        setAvailableModels({
+          ollama: config.ai.providers.ollama.models,
+          openai: config.ai.providers.openai.models,
+          anthropic: config.ai.providers.anthropic.models
+        });
+      } catch (error) {
+        console.error('Failed to load models from config:', error);
+        // Fallback to default models
+        setAvailableModels({
+          ollama: ['gpt-oss'],
+          openai: ['gpt-5-mini-2025-08-07', 'gpt-5-2025-08-07', 'gpt-5-nano'],
+          anthropic: ['claude-3-5-haiku-20241022', 'claude-sonnet-4-20250514', 'claude-opus-4-1-20250805']
+        });
+      }
+    };
+
+    loadAvailableModels();
+  }, []);
 
   // Load conversation stats
   useEffect(() => {
@@ -298,15 +333,18 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                       <div>
                         <label className="block text-sm text-gray-600 mb-1">Ollama Model</label>
-                        <input
-                          type="text"
+                        <select
                           value={settings.ai.defaultModels.ollama}
                           onChange={(e) => updateCategory('ai', {
                             ...settings.ai,
                             defaultModels: { ...settings.ai.defaultModels, ollama: e.target.value }
                           })}
                           className="w-full border rounded px-3 py-2"
-                        />
+                        >
+                          {availableModels.ollama.map(model => (
+                            <option key={model} value={model}>{model}</option>
+                          ))}
+                        </select>
                       </div>
 
                       <div>
@@ -319,9 +357,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                           })}
                           className="w-full border rounded px-3 py-2"
                         >
-                          <option value="gpt-5">GPT-5</option>
-                          <option value="o3">O3</option>
-                          <option value="gpt-5-mini">GPT-5 Mini</option>
+                          {availableModels.openai.map(model => (
+                            <option key={model} value={model}>{model}</option>
+                          ))}
                         </select>
                       </div>
 
@@ -335,9 +373,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                           })}
                           className="w-full border rounded px-3 py-2"
                         >
-                          <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                          <option value="claude-3-opus-20240229">Claude 3 Opus</option>
-                          <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+                          {availableModels.anthropic.map(model => (
+                            <option key={model} value={model}>{model}</option>
+                          ))}
                         </select>
                       </div>
                     </div>

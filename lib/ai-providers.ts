@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getProviderConfig, getDefaultModel } from './config';
 
 export interface AIConfig {
   provider: 'ollama' | 'openai' | 'anthropic';
@@ -92,7 +93,7 @@ export class AIProvider {
       const response = await axios.post(
         'https://api.openai.com/v1/chat/completions',
         {
-          model: this.config.model || 'gpt-4',
+          model: this.config.model || getDefaultModel('openai'),
           messages
         },
         {
@@ -158,22 +159,60 @@ export class AIProvider {
       }
     }
 
-    const response = await axios.post(
-      'https://api.anthropic.com/v1/messages',
-      {
-        model: this.config.model || 'claude-3-opus-20240229',
-        messages,
-        max_tokens: 4096
-      },
-      {
-        headers: {
-          'x-api-key': this.config.apiKey,
-          'anthropic-version': '2023-06-01',
-          'Content-Type': 'application/json'
+    try {
+      const anthropicConfig = getProviderConfig('anthropic');
+      const model = this.config.model || getDefaultModel('anthropic');
+
+      console.log('🤖 Making Anthropic API call with model:', model);
+
+      // Separate system message from user/assistant messages
+      const systemMessage = messages.find(m => m.role === 'system');
+      const userMessages = messages.filter(m => m.role !== 'system');
+
+      // Prepare request body
+      const requestBody: any = {
+        model,
+        messages: userMessages,
+        max_tokens: anthropicConfig.maxTokens || 8192
+      };
+
+      // Add system message as top-level parameter if it exists
+      if (systemMessage) {
+        requestBody.system = systemMessage.content;
+      }
+
+      const response = await axios.post(
+        `${anthropicConfig.baseUrl}/v1/messages`,
+        requestBody,
+        {
+          headers: {
+            'x-api-key': this.config.apiKey,
+            'anthropic-version': anthropicConfig.apiVersion || '2023-06-01',
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      console.log('✅ Anthropic API response received successfully');
+      return this.processAnthropicResponse(response);
+
+    } catch (error: any) {
+      console.error('❌ Anthropic API error:', error.response?.data || error.message);
+
+      if (error.response?.status === 400) {
+        const errorData = error.response.data;
+        if (errorData.error?.message) {
+          throw new Error(`Anthropic API 400: ${errorData.error.message}`);
+        } else {
+          throw new Error(`Anthropic API 400: Bad Request - ${JSON.stringify(errorData)}`);
         }
       }
-    );
 
+      throw error;
+    }
+  }
+
+  private processAnthropicResponse(response: any): AIResponse {
     const result: AIResponse = {
       content: response.data.content[0].text
     };
@@ -301,7 +340,7 @@ export class AIProvider {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: this.config.model || 'gpt-4',
+        model: this.config.model || getDefaultModel('openai'),
         messages,
         stream: true
       }),
@@ -372,10 +411,122 @@ export class AIProvider {
   }
 
   private async *streamWithAnthropic(messages: Array<{ role: string; content: string }>): AsyncGenerator<any, void, unknown> {
-    // For now, fall back to non-streaming for Anthropic
-    // Anthropic's streaming API has a different format
-    const response = await this.chatWithAnthropic(messages);
-    yield { type: 'content', content: response.content };
+    if (!this.config.apiKey) {
+      // Check for environment variable
+      const envKey = process.env.ANTHROPIC_API_KEY;
+      if (envKey) {
+        this.config.apiKey = envKey;
+      } else {
+        throw new Error('Anthropic API key is required');
+      }
+    }
+
+    try {
+      const anthropicConfig = getProviderConfig('anthropic');
+      const model = this.config.model || getDefaultModel('anthropic');
+
+      console.log('🤖 Making Anthropic streaming API call with model:', model);
+
+      // Separate system message from user/assistant messages
+      const systemMessage = messages.find(m => m.role === 'system');
+      const userMessages = messages.filter(m => m.role !== 'system');
+
+      // Prepare request body
+      const requestBody: any = {
+        model,
+        messages: userMessages,
+        max_tokens: anthropicConfig.maxTokens || 8192,
+        stream: true
+      };
+
+      // Add system message as top-level parameter if it exists
+      if (systemMessage) {
+        requestBody.system = systemMessage.content;
+      }
+
+      const response = await fetch(
+        `${anthropicConfig.baseUrl}/v1/messages`,
+        {
+          method: 'POST',
+          headers: {
+            'x-api-key': this.config.apiKey,
+            'anthropic-version': anthropicConfig.apiVersion || '2023-06-01',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestBody)
+        }
+      );
+
+      if (!response.ok) {
+        let errorMessage = `Anthropic API error (${response.status})`;
+
+        if (response.status === 400) {
+          const errorData = await response.json();
+          if (errorData.error?.message) {
+            errorMessage = `Anthropic API 400: ${errorData.error.message}`;
+          } else {
+            errorMessage = `Anthropic API 400: Bad Request - ${JSON.stringify(errorData)}`;
+          }
+        } else if (response.status === 401) {
+          errorMessage = 'Invalid Anthropic API key. Please check your API key and try again.';
+        } else if (response.status === 429) {
+          errorMessage = 'Anthropic API rate limit exceeded. Please try again in a moment.';
+        }
+
+        throw new Error(errorMessage);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body available');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') return;
+
+              try {
+                const parsed = JSON.parse(data);
+                if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                  yield { type: 'content', content: parsed.delta.text };
+                }
+              } catch (error) {
+                console.error('Error parsing Anthropic streaming JSON:', error);
+              }
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+    } catch (error: any) {
+      console.error('❌ Anthropic streaming API error:', error.message);
+
+      if (error.response?.status === 400) {
+        const errorData = error.response.data;
+        if (errorData.error?.message) {
+          throw new Error(`Anthropic API 400: ${errorData.error.message}`);
+        } else {
+          throw new Error(`Anthropic API 400: Bad Request - ${JSON.stringify(errorData)}`);
+        }
+      }
+
+      throw error;
+    }
   }
 
   static async getOllamaModels(baseUrl: string = 'http://localhost:11434'): Promise<string[]> {

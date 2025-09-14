@@ -18,9 +18,10 @@ export async function POST(request: NextRequest) {
     });
 
     let processedMessages = messages;
-    
+
     if (action) {
       const systemPrompt = getActionPrompt(action);
+      // Always use system role - the AIProvider will handle Anthropic's format
       processedMessages = [
         { role: 'system', content: systemPrompt },
         ...messages

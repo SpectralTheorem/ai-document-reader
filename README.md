@@ -21,12 +21,12 @@ A sophisticated AI-powered document reader with full-book context awareness and 
   - 💡 Explain complex concepts in simple terms
   - ❓ Generate thoughtful discussion questions
   - 🔍 Identify and define key concepts
-- **Full-Book Context Tools**:
-  - 🔍 **Search Book**: Semantic search across entire book content
-  - 🔗 **Find Cross-References**: Locate related sections and supporting evidence
-  - 📋 **Key Terms**: Extract important concepts from chapters or entire book
-  - 📖 **Book Structure**: View hierarchical organization and navigation
-  - 🎯 **Supporting Evidence**: Find examples, statistics, quotes, and case studies
+- **Multi-Agent Research System** (Anthropic API required):
+  - 🤖 **BookSearchAgent**: Semantic content discovery across entire book
+  - 📊 **EvidenceAgent**: Claim verification and supporting evidence gathering
+  - 🔗 **AnalysisAgent**: Cross-referencing, pattern analysis, and synthesis
+  - 📖 **ContextAgent**: Book structure understanding and thematic relationships
+  - 🧠 **Research Orchestrator**: Coordinates agents and synthesizes findings
 - **Enhanced Context Assembly**: AI receives related chapters and book structure, not just current chapter
 - **Streaming Responses**: Real-time AI responses with thinking token support
 
@@ -93,13 +93,14 @@ ollama pull mistral
 2. **Navigate Chapters**: Click chapters in the left sidebar to read or start conversations
 3. **Chat with Full Context**: Use chapter-level or full-book context tools
 4. **Multiple Conversations**: Create multiple conversation threads per chapter
-5. **Book-Wide Research**: Use full-book context tools for comprehensive analysis:
-   - Search across entire book content
-   - Find cross-references and connections
-   - Extract key terms and concepts
-   - Analyze book structure and organization
-   - Locate supporting evidence for claims
-6. **Switch Providers**: Choose between local Ollama or cloud APIs
+5. **Multi-Agent Research**: Ask questions naturally - the AI research system automatically:
+   - Detects query type (factual, analytical, comparative, evaluative)
+   - Deploys specialized agents in parallel
+   - Searches entire book content semantically
+   - Gathers supporting evidence and cross-references
+   - Analyzes patterns and relationships
+   - Synthesizes comprehensive research-grade responses
+6. **Switch Providers**: Choose between local Ollama or cloud APIs (Anthropic enables full research system)
 
 ## 🏗️ Architecture
 
@@ -116,6 +117,8 @@ ollama pull mistral
   - Browser-based book content management for privacy
 - **AI Integration**:
   - Axios-based providers for Ollama, OpenAI, and Anthropic
+  - **Multi-agent research system** with Claude SDK TypeScript
+  - **Orchestrator-worker pattern** with parallel agent execution
   - Full-book context management with semantic search
   - Claude Code-inspired architecture for comprehensive understanding
 - **UI Components**: Radix UI primitives with Lucide React icons
@@ -123,12 +126,14 @@ ollama pull mistral
 ### Key Components
 - **EPUBParser**: Advanced parser that extracts both HTML and text content
 - **DocumentFactory**: Abstracted interface for multiple document types
+- **BookResearchOrchestrator**: Coordinates specialized research agents with intelligent query analysis
+- **Specialized Research Agents**: BookSearchAgent, EvidenceAgent, AnalysisAgent, ContextAgent
 - **BookContextManager**: Full-book context awareness and semantic search
 - **ConversationStorage**: Persistent multi-thread conversation management
 - **LibraryStorage**: IndexedDB-based book library with progress tracking
 - **ReaderLayout**: Responsive split-pane interface with library integration
-- **ChatInterface**: Context-aware AI conversation system with full-book tools
-- **AIProvider**: Unified interface for multiple AI services with enhanced context
+- **ChatInterface**: Context-aware AI conversation system with automatic research enhancement
+- **AIProvider**: Unified interface for multiple AI services with multi-agent capabilities
 
 ## Future Enhancements
 
@@ -159,6 +164,13 @@ ollama pull mistral
 - Try refreshing the page to reinitialize book context
 - Verify the book contains readable text content
 
+### Multi-Agent Research System Not Working
+- Ensure Anthropic is selected as the AI provider in settings
+- Verify `ANTHROPIC_API_KEY` is configured in `.env` or entered in UI
+- Check that the blue "AI Research Agent Active" indicator appears
+- For API key issues, check browser network tab for 401/403 errors
+- Rate limiting: Research system will fallback to basic AI if rate limited
+
 ## 📸 Screenshots
 
 ![Upload Interface](docs/screenshots/upload.png)
@@ -182,6 +194,14 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 5. Open a Pull Request
 
 ## 📝 Changelog
+
+### v2.1.0 (2024-12-15)
+- 🤖 **Multi-Agent Research System**: Claude Code for books with 4 specialized research agents
+- 🧠 **Automatic AI Enhancement**: Questions automatically enhanced with comprehensive research
+- 🔍 **Parallel Agent Execution**: BookSearchAgent, EvidenceAgent, AnalysisAgent, ContextAgent work simultaneously
+- 📊 **Query Intelligence**: Automatic detection of factual, analytical, comparative, and evaluative queries
+- 🎯 **Research Synthesis**: Multi-agent findings combined into comprehensive, research-grade responses
+- ⚡ **Transparent Operation**: No manual tool selection - AI research happens automatically
 
 ### v2.0.0 (2024-12-15)
 - 🧠 **Full-Book Context Awareness**: AI now understands entire book structure and relationships

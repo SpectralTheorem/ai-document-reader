@@ -82,8 +82,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultProvider: 'ollama',
     defaultModels: {
       ollama: 'gpt-oss',
-      openai: 'gpt-5',
-      anthropic: 'claude-3-5-sonnet-20241022'
+      openai: 'gpt-5-mini-2025-08-07',
+      anthropic: 'claude-3-5-haiku-20241022'
     },
     apiKeys: {},
     enableTokenTracking: true,

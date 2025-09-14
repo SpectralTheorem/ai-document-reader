@@ -28,13 +28,7 @@ const AI_ACTIONS = [
   { id: 'key-concepts', name: 'Key Concepts', icon: Sparkles },
 ];
 
-const BOOK_CONTEXT_ACTIONS = [
-  { id: 'book-search', name: 'Search Book', icon: FileSearch },
-  { id: 'find-references', name: 'Find Cross-References', icon: Sparkles },
-  { id: 'get-key-terms', name: 'Key Terms', icon: List },
-  { id: 'book-structure', name: 'Book Structure', icon: Archive },
-  { id: 'supporting-evidence', name: 'Find Evidence', icon: Lightbulb },
-];
+// Legacy book context actions - no longer used as AI research system handles these automatically
 
 interface ThinkingSectionProps {
   content: string;
@@ -209,90 +203,16 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
     }
   };
 
+  // Legacy book context action handler - kept for backward compatibility but unused
   const handleBookContextAction = async (actionId: string, userInput?: string): Promise<string> => {
-    if (!bookContextEnabled) {
-      throw new Error('Book context not available');
-    }
-
-    switch (actionId) {
-      case 'book-search':
-        const query = userInput || prompt('What would you like to search for in the book?');
-        if (!query) throw new Error('Search query required');
-        return await bookContextManager.searchBookContent(query, 10);
-
-      case 'find-references':
-        const topic = userInput || prompt('What topic would you like to find references for?');
-        if (!topic) throw new Error('Topic required');
-        return await bookContextManager.findCrossReferences(topic, section?.id);
-
-      case 'get-key-terms':
-        return await bookContextManager.getKeyTerms(section?.id, 15);
-
-      case 'book-structure':
-        return await bookContextManager.getBookStructure(true);
-
-      case 'supporting-evidence':
-        const claim = userInput || prompt('What claim would you like to find supporting evidence for?');
-        if (!claim) throw new Error('Claim required');
-        return await bookContextManager.findSupportingEvidence(claim, 'all');
-
-      default:
-        throw new Error(`Unknown book context action: ${actionId}`);
-    }
+    console.warn('Legacy book context action called - these are now handled automatically by AI research system');
+    return 'This functionality is now handled automatically by the AI research system.';
   };
 
   const sendMessage = async (content: string, action?: string) => {
     if (!section || (!content.trim() && !action) || !currentThread) return;
 
-    // Handle book context actions directly
-    if (action && BOOK_CONTEXT_ACTIONS.find(a => a.id === action)) {
-      setIsLoading(true);
-      try {
-        const result = await handleBookContextAction(action);
-
-        const userMessage: ChatMessage = {
-          id: generateId(),
-          role: 'user',
-          content: `[Book Context Action: ${BOOK_CONTEXT_ACTIONS.find(a => a.id === action)?.name}]`,
-          timestamp: new Date(),
-          sectionId: section.id,
-        };
-
-        const assistantMessage: ChatMessage = {
-          id: generateId(),
-          role: 'assistant',
-          content: result,
-          timestamp: new Date(),
-          sectionId: section.id,
-        };
-
-        const updatedMessages = [...messages, userMessage, assistantMessage];
-        onMessagesChange(updatedMessages);
-
-        // Save messages to thread
-        try {
-          await conversationStorage.addMessage(currentThread.id, userMessage);
-          await conversationStorage.addMessage(currentThread.id, assistantMessage);
-        } catch (error) {
-          console.error('Failed to save book context action messages:', error);
-        }
-      } catch (error) {
-        const errorMessage: ChatMessage = {
-          id: generateId(),
-          role: 'assistant',
-          content: `Error executing book context action: ${error instanceof Error ? error.message : String(error)}`,
-          timestamp: new Date(),
-          sectionId: section.id,
-          isError: true,
-        };
-
-        const updatedMessages = [...messages, errorMessage];
-        onMessagesChange(updatedMessages);
-      } finally {
-        setIsLoading(false);
-      }
-      return;
-    }
+    // Legacy book context actions are now handled automatically by AI research system
 
     const userMessage: ChatMessage = {
       id: generateId(),
@@ -328,12 +248,22 @@ export function ChatInterface({ section, bookId, messages, onMessagesChange }: C
     onMessagesChange(messagesWithAssistant);
 
     try {
-      // Enhanced context using book-wide understanding if available
+      // Enhanced context using AI research orchestrator if available
       let contextContent = `You are helping analyze the following chapter from a book. Chapter title: "${section.title}". Chapter content: ${section.content?.substring(0, 3000)}...`;
+      let useResearchOrchestrator = false;
 
-      if (bookContextEnabled) {
+      if (bookContextEnabled && settings.ai.defaultProvider === 'anthropic' && settings.ai.apiKeys.anthropic) {
+        // Use the AI research orchestrator for comprehensive analysis
+        useResearchOrchestrator = true;
+        contextContent = `You are an AI assistant helping analyze content from "${bookContextManager.getCurrentBookTitle()}".
+
+Current Chapter: "${section.title}"
+Chapter Content: ${section.content?.substring(0, 2000)}...
+
+You have access to advanced research capabilities that can search the entire book, find cross-references, gather evidence, and provide comprehensive analysis. The AI research system will automatically enhance your responses with book-wide context when needed.`;
+      } else if (bookContextEnabled) {
         try {
-          // Get enhanced context from book context manager
+          // Fallback to basic book context manager
           const chapterContext = await bookContextManager.getChapterContext(section.id, true);
           const bookStructure = await bookContextManager.getBookStructure(false);
 
@@ -351,6 +281,56 @@ ${bookStructure}
 You have access to the full book content and can reference other chapters, find cross-references, and provide comprehensive analysis based on the entire book rather than just the current chapter.`;
         } catch (error) {
           console.warn('Failed to get enhanced book context, falling back to basic context:', error);
+        }
+      }
+
+      // If using research orchestrator, intercept the query first
+      if (useResearchOrchestrator && !action) {
+        try {
+          const researchResponse = await fetch('/api/book-research', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: content,
+              bookId,
+              apiKey: settings.ai.apiKeys.anthropic,
+              mode: 'full'
+            }),
+          });
+
+          if (researchResponse.ok) {
+            const research = await researchResponse.json();
+
+            // Update the assistant message with research findings
+            const finalMessage = messagesWithAssistant.find(m => m.id === assistantMessageId);
+            if (finalMessage) {
+              finalMessage.content = research.synthesis;
+            }
+
+            // Update messages and save to thread
+            onMessagesChange(messagesWithAssistant);
+
+            if (currentThread) {
+              const finalAssistantMessage: ChatMessage = {
+                id: assistantMessageId,
+                role: 'assistant',
+                content: research.synthesis,
+                timestamp: new Date(),
+                sectionId: section.id,
+              };
+
+              try {
+                await conversationStorage.addMessage(currentThread.id, finalAssistantMessage);
+              } catch (error) {
+                console.error('Failed to save research message:', error);
+              }
+            }
+
+            setIsLoading(false);
+            return;
+          }
+        } catch (error) {
+          console.warn('Research orchestrator failed, falling back to standard AI:', error);
         }
       }
 
@@ -637,22 +617,6 @@ You have access to the full book content and can reference other chapters, find 
   return (
     <div className="h-full flex flex-col bg-gray-50">
       <div className="p-4 bg-white border-b">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center space-x-2">
-            <h3 className="font-medium">Chat about: {section.title}</h3>
-            {currentThread && (
-              <div className="text-sm text-gray-500">
-                • {currentThread.title}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center space-x-2">
-            <div className="text-sm text-gray-600">
-              {settings.ai.defaultProvider} • {settings.ai.defaultModels[settings.ai.defaultProvider]}
-            </div>
-          </div>
-        </div>
-
         {/* Thread Management */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
@@ -743,11 +707,6 @@ You have access to the full book content and can reference other chapters, find 
             </Button>
           </div>
 
-          {currentThread && (
-            <div className="text-xs text-gray-500">
-              {currentThread.messageCount} messages
-            </div>
-          )}
         </div>
 
 {/* Header action buttons removed - too cluttered */}
@@ -795,43 +754,27 @@ You have access to the full book content and can reference other chapters, find 
                 })}
               </div>
 
-              {/* Book Context Actions - shown only when book context is enabled */}
+              {/* AI Research Status - shown when book context is enabled */}
               {bookContextEnabled && (
-                <>
-                  <div className="flex items-center space-x-2 mb-4">
-                    <div className="flex-1 h-px bg-gray-200"></div>
-                    <span className="px-3 text-sm font-medium text-gray-500">Full Book Context Tools</span>
-                    <div className="flex-1 h-px bg-gray-200"></div>
+                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Sparkles className="h-5 w-5 text-blue-600" />
+                    <span className="font-medium text-blue-900">AI Research Agent Active</span>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                    {BOOK_CONTEXT_ACTIONS.map((action) => {
-                      const Icon = action.icon;
-                      return (
-                        <Button
-                          key={action.id}
-                          variant="outline"
-                          size="lg"
-                          onClick={() => sendMessage('', action.id)}
-                          disabled={isLoading}
-                          className="flex items-center justify-center space-x-3 py-4 px-6 h-auto text-left hover:bg-green-50 border-green-200"
-                        >
-                          <Icon className="h-5 w-5 text-green-600 flex-shrink-0" />
-                          <div className="flex-1">
-                            <div className="font-medium text-gray-900">{action.name}</div>
-                            <div className="text-xs text-gray-500 mt-1">
-                              {action.id === 'book-search' && 'Search across the entire book'}
-                              {action.id === 'find-references' && 'Find related sections and cross-references'}
-                              {action.id === 'get-key-terms' && 'Extract important terms and concepts'}
-                              {action.id === 'book-structure' && 'View complete book organization'}
-                              {action.id === 'supporting-evidence' && 'Find evidence for claims and arguments'}
-                            </div>
-                          </div>
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </>
+                  <p className="text-sm text-blue-700">
+                    Your questions will be enhanced with comprehensive book-wide research including:
+                    semantic search, evidence gathering, cross-referencing, and contextual analysis.
+                  </p>
+                  {settings.ai.defaultProvider === 'anthropic' && settings.ai.apiKeys.anthropic ? (
+                    <div className="mt-2 text-xs text-blue-600 font-medium">
+                      ✓ Multi-agent research system enabled
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-xs text-amber-600">
+                      Basic book context available (Anthropic API key required for full multi-agent research)
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
